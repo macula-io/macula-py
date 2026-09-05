@@ -48,6 +48,17 @@ CallHandler = Callable[[cbor.Value], Awaitable[cbor.Value]]
 CallLookup = Callable[[bytes, str], "CallHandler | None"]
 DEFAULT_HANDSHAKE_TIMEOUT = 30.0
 
+#: Provider-side handler for one advertised streaming procedure -- drives
+#: the stream by calling methods on the `StreamHandle` it's given (send_chunk,
+#: recv, set_reply, close/close_send, abort), matching the reference's own
+#: `stream_handler() :: fun((stream(), term()) -> any())` shape. Any
+#: exception aborts the stream with a STREAM_ERROR, same policy as
+#: CallHandler for unary RPC.
+StreamHandler = Callable[["StreamHandle", cbor.Value], Awaitable[None]]
+
+#: Resolves an inbound STREAM_OPEN's (realm, procedure) to a handler, or None if nothing is advertised for it.
+StreamLookup = Callable[[bytes, str], "StreamHandler | None"]
+
 
 class ConnectRefusedError(Exception):
     """The station's HELLO carried accepted=false."""
@@ -73,6 +84,7 @@ class Session:
     _reader: asyncio.StreamReader
     _writer: asyncio.StreamWriter
     _connect_cm: AbstractAsyncContextManager
+    _incoming_streams: "asyncio.Queue[tuple[asyncio.StreamReader, asyncio.StreamWriter]]"
     _closed: bool = False
 
     @classmethod
@@ -91,7 +103,18 @@ class Session:
         `handshake_timeout`.
         """
         configuration = QuicConfiguration(is_client=True, alpn_protocols=[ALPN])
-        connect_cm = aioquic_connect(host, port, configuration=configuration)
+        incoming_streams: "asyncio.Queue[tuple[asyncio.StreamReader, asyncio.StreamWriter]]" = asyncio.Queue()
+
+        def _on_new_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            # Called synchronously from aioquic's event loop the first time
+            # data arrives on a stream_id this protocol didn't itself
+            # create via create_stream() -- i.e. a peer-initiated stream.
+            # STREAM_OPEN (streaming RPC) is the only thing that opens one
+            # of these against a leaf client; queued for accept_stream() to
+            # pick up, matching serve_one_call()'s own pull-based shape.
+            incoming_streams.put_nowait((reader, writer))
+
+        connect_cm = aioquic_connect(host, port, configuration=configuration, stream_handler=_on_new_stream)
         protocol = await connect_cm.__aenter__()
         try:
             reader, writer = await protocol.create_stream()
@@ -126,6 +149,7 @@ class Session:
                 _reader=reader,
                 _writer=writer,
                 _connect_cm=connect_cm,
+                _incoming_streams=incoming_streams,
             )
         except BaseException:
             await connect_cm.__aexit__(None, None, None)
@@ -278,6 +302,63 @@ class Session:
         value = await asyncio.wait_for(_recv_one_frame(reader), timeout=timeout)
         return frame.parse_call_response(value)
 
+    async def open_stream(
+        self,
+        procedure: str,
+        realm: bytes,
+        args: cbor.Value,
+        deadline_ms: int,
+        *,
+        mode: str = "server_stream",
+    ) -> "StreamHandle":
+        """Open a streaming RPC (caller role): a fresh dedicated QUIC stream with a signed STREAM_OPEN as its first bytes, matching macula_station_link.erl's own open_client_stream_dedicated -- STREAM_OPEN travels on its own stream, not the control stream.
+
+        Returns immediately after sending STREAM_OPEN, same as the
+        reference: no handshake ack is expected before the caller can
+        start sending/receiving on the returned handle. An unknown
+        procedure surfaces as a StreamAbortedError on the first `recv()`,
+        not here.
+        """
+        reader, writer = await self.open_dedicated_stream()
+        stream_id = os.urandom(16)
+        open_frame = frame.sign(
+            frame.build_stream_open(stream_id, procedure, realm, mode, args, deadline_ms, self.identity.node_id()),
+            self.identity,
+        )
+        writer.write(frame.encode_frame(open_frame))
+        await writer.drain()
+        return StreamHandle(self, stream_id, mode, reader, writer)
+
+    async def accept_stream(self, lookup: StreamLookup, timeout: float | None = None) -> None:
+        """The provider role's counterpart to :meth:`open_stream`: block for the next peer-initiated dedicated stream, bounded by `timeout`, expect a STREAM_OPEN as its first frame, look up the handler via `lookup`, and drive it to completion.
+
+        A stream procedure is advertised exactly like a unary one --
+        :meth:`advertise` -- since the wire's ADVERTISE frame doesn't
+        distinguish them (confirmed in macula_streamer.erl: streaming and
+        unary procedures publish the same `procedure_advertisement`
+        record). What disambiguates them on the receiving end is that
+        STREAM_OPEN always arrives on a brand-new dedicated stream while
+        CALL always arrives on the shared control stream -- no separate
+        "declare this procedure as streaming" wire step is needed.
+        """
+        coro = self._incoming_streams.get()
+        reader, writer = await (asyncio.wait_for(coro, timeout=timeout) if timeout is not None else coro)
+        try:
+            value = await _recv_one_frame(reader)
+            open_info = frame.parse_stream_open(value)
+        except (frame.ParseFrameError, asyncio.IncompleteReadError):
+            writer.close()
+            return
+        handle = StreamHandle(self, open_info.stream_id, open_info.mode, reader, writer)
+        handler = lookup(open_info.realm, open_info.procedure)
+        if handler is None:
+            await handle.abort("not_found", "procedure not advertised")
+            return
+        try:
+            await handler(handle, open_info.args)
+        except Exception as e:
+            await handle.abort("handler_error", str(e))
+
     async def close(self) -> None:
         """Close the connection. Idempotent."""
         if self._closed:
@@ -290,6 +371,77 @@ class Session:
 
     async def __aexit__(self, *exc_info) -> None:
         await self.close()
+
+
+@dataclass
+class StreamHandle:
+    """One streaming RPC session, either role -- wraps the dedicated QUIC
+    stream STREAM_OPEN travels on, plus everything STREAM_DATA/END/ERROR/
+    REPLY need (the owning session's identity for signing, an outbound
+    sequence counter, stream_id for the frame envelope). Ports the
+    operations `macula_stream.erl` exposes (send/2, recv/2, close_send/1,
+    close/1, set_reply/2, abort/3) onto this dedicated stream directly --
+    no separate gen_server needed since there's exactly one Python task
+    driving each handle.
+    """
+
+    session: Session
+    stream_id: bytes
+    mode: str
+    _reader: asyncio.StreamReader
+    _writer: asyncio.StreamWriter
+    _seq_out: int = 0
+    _closed_send: bool = False
+
+    async def send_chunk(self, body: bytes, *, encoding: str = "raw") -> None:
+        """Send one STREAM_DATA chunk."""
+        signer = self.session.identity.node_id()
+        built = frame.build_stream_data(self.stream_id, self._seq_out, body, signer, encoding=encoding)
+        signed = frame.sign(built, self.session.identity)
+        self._writer.write(frame.encode_frame(signed))
+        await self._writer.drain()
+        self._seq_out += 1
+
+    async def recv(self, timeout: float | None = None) -> frame.StreamInbound:
+        """Read the next inbound frame: a STREAM_DATA chunk, STREAM_END, or the terminal STREAM_REPLY. Raises StreamAbortedError on STREAM_ERROR."""
+        coro = _recv_one_frame(self._reader)
+        value = await (asyncio.wait_for(coro, timeout=timeout) if timeout is not None else coro)
+        return frame.parse_stream_inbound(value)
+
+    async def close_send(self) -> None:
+        """Half-close: no more outbound chunks. The recv side stays open."""
+        if self._closed_send:
+            return
+        signer = self.session.identity.node_id()
+        signed = frame.sign(frame.build_stream_end(self.stream_id, "send", signer), self.session.identity)
+        self._writer.write(frame.encode_frame(signed))
+        await self._writer.drain()
+        self._closed_send = True
+
+    async def close(self) -> None:
+        """Full close: STREAM_END(role=both) if not already half-closed, then close the underlying QUIC stream. Idempotent."""
+        if not self._closed_send:
+            signer = self.session.identity.node_id()
+            signed = frame.sign(frame.build_stream_end(self.stream_id, "both", signer), self.session.identity)
+            self._writer.write(frame.encode_frame(signed))
+            await self._writer.drain()
+            self._closed_send = True
+        self._writer.close()
+
+    async def set_reply(self, payload: cbor.Value) -> None:
+        """Provider role: emit the terminal STREAM_REPLY."""
+        responded_by = self.session.identity.node_id()
+        signed = frame.sign(frame.build_stream_reply(self.stream_id, payload, responded_by), self.session.identity)
+        self._writer.write(frame.encode_frame(signed))
+        await self._writer.drain()
+
+    async def abort(self, code: str, message: str) -> None:
+        """Abort with a STREAM_ERROR and close the stream. Either role."""
+        signer = self.session.identity.node_id()
+        signed = frame.sign(frame.build_stream_error(self.stream_id, code, message, signer), self.session.identity)
+        self._writer.write(frame.encode_frame(signed))
+        await self._writer.drain()
+        self._writer.close()
 
 
 async def _recv_one_frame(reader: asyncio.StreamReader) -> cbor.Value:

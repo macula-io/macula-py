@@ -18,7 +18,7 @@ application networks; a **station** is the relay/DHT node, and this
 package is what a **leaf** -- anything that isn't itself a station --
 uses to join it.
 
-## Status, 2026-09-05 (content transfer)
+## Status, 2026-09-05 (streaming RPC -- phase 1 basics complete)
 
 **In progress, greenfield build.** Built and verified so far, in the
 order every sibling SDK was built in:
@@ -89,11 +89,44 @@ order every sibling SDK was built in:
   fixed at the source (macula-io/macula-station), and confirmed live
   against the production fleet before calling this piece done.
 
-**Not yet built**: streaming RPC (both caller and provider roles) -- the
-rest of this phase's scope. Direct-dial, periodic re-advertise, UCAN,
-cert-chain verification, the supervised pubsub wrapper, and RPC
-telemetry facts are explicitly OUT of scope for this first pass,
-matching the order every other Macula SDK was built and reviewed in.
+- **Streaming RPC, both caller and provider roles** (`Session.open_stream`/
+  `Session.accept_stream`, `macula.connection.StreamHandle`) --
+  STREAM_OPEN/DATA/END/ERROR/REPLY over their own dedicated QUIC stream
+  (like content transfer, not the control stream), matching
+  `macula_frame.erl`'s constructors and `macula_station_link.erl`'s own
+  open/dispatch sequencing exactly, including the `signer`/`responded_by`
+  fields non-OPEN stream frames carry for cross-hop authentication.
+  Cross-verified in both directions against real Erlang-signed frames
+  (this module decodes and signature-verifies frames built by the actual
+  `macula_frame:stream_*/1` + `sign/2`; frames this module builds decode
+  and verify cleanly against the real Erlang `macula_frame:decode/1` too)
+  -- see `tests/test_frame_streaming.py`. A stream procedure is
+  advertised exactly like a unary one (`Session.advertise`): the wire's
+  ADVERTISE frame doesn't distinguish them, and what disambiguates on
+  the receiving end is that STREAM_OPEN always arrives on a fresh
+  dedicated stream while CALL always arrives on the control stream.
+  **Live-verified**: a real `server_stream` round trip against the
+  production fleet -- provider sends chunks, caller receives them plus
+  the terminal STREAM_REPLY.
+
+  `client_stream`/`bidi` mode is code-complete and wire-correct (the
+  provider genuinely receives every chunk and its `set_reply()` call
+  raises nothing) but its full round trip is marked `xfail` against the
+  live fleet, not claimed working: macula-station's own stream-route
+  lifecycle (`macula_station_peer_observer.erl`) drops the *entire*
+  bidirectional route on the first terminal frame it sees for a
+  stream_id rather than tracking each direction separately -- its own
+  comment documents this as deliberate for now, scoped to the
+  `server_stream` mode its test suite exercises. A `client_stream`
+  caller's own half-close (`STREAM_END(role=send)`) hits exactly this
+  gap: the route (and both dedicated QUIC streams) close before the
+  provider's reply can be relayed back. This is a station-side relay
+  gap, not something fixable in this SDK -- reported upstream.
+
+**Not yet built**: direct-dial, periodic re-advertise, UCAN, cert-chain
+verification, and the supervised pubsub wrapper are explicitly OUT of
+scope for this first pass, matching the order every other Macula SDK
+was built and reviewed in. RPC telemetry facts are likewise deferred.
 
 ## Development
 

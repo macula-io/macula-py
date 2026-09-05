@@ -523,6 +523,253 @@ def _require_topic_bytes(frame: dict, field: str = "topic") -> str:
         raise ParseFrameError(f"field {field!r} is not valid UTF-8") from e
 
 
+#: ---------------------------------------------------------------------
+#: STREAM_OPEN / STREAM_DATA / STREAM_END / STREAM_ERROR / STREAM_REPLY --
+#: streaming RPC, both caller and provider roles. Every stream frame
+#: travels on its own dedicated QUIC stream (opened fresh for STREAM_OPEN,
+#: exactly like content transfer's dedicated stream) rather than the
+#: shared control stream; `stream_id' alone correlates the rest of that
+#: stream's frames, since there's only ever one stream session per
+#: dedicated QUIC stream. `mode'/`role'/`encoding' are Erlang atoms at
+#: the frame-envelope level (like `frame_type'/`accepted'/`delivered_via'
+#: elsewhere in this module) so they round-trip as plain CBOR text --
+#: ordinary Python `str` here, no special encode/decode helper needed.
+#: `code'/`message' in STREAM_ERROR are `binary()' on the wire per
+#: macula_frame.erl's own guards (`is_binary'), the same convention as
+#: `procedure'/`topic': UTF-8-encoded bytes, exposed here as `str' to
+#: match this SDK's own `CallError.detail' ergonomics.
+#:
+#: `signer' (STREAM_DATA/END/ERROR) and `responded_by' (STREAM_REPLY) are
+#: a SEPARATE field from the frame's own whole-frame `signature' --
+#: needed on the real mesh so a multi-hop relay can verify a chunk
+#: against its ORIGINAL emitter rather than the immediate peering
+#: connection's identity (macula_station_link.erl's `finalise_stream_spec/3`
+#: doc comment). This SDK doesn't do multi-hop relay, but the station
+#: still expects the field populated on outbound frames, and always
+#: populates it on inbound ones -- required here, not optional, matching
+#: how every real call site actually uses it.
+#: ---------------------------------------------------------------------
+
+STREAM_MODES = ("server_stream", "client_stream", "bidi")
+STREAM_END_ROLES = ("send", "both")
+STREAM_ENCODINGS = ("raw", "msgpack")
+
+
+class StreamAbortedError(Exception):
+    """Raised when the peer sends a STREAM_ERROR -- the stream is closed, both sides."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(f"stream aborted: {code}: {message}")
+        self.code = code
+        self.message = message
+
+
+def build_stream_open(
+    stream_id: bytes,
+    procedure: str,
+    realm: bytes,
+    mode: str,
+    args: cbor.Value,
+    deadline_ms: int,
+    caller: bytes,
+    *,
+    source_route: bytes = b"",
+    retry_budget: int = 0,
+) -> dict:
+    if mode not in STREAM_MODES:
+        raise ValueError(f"mode must be one of {STREAM_MODES}, got {mode!r}")
+    frame = base("stream_open", 0)
+    frame.update(
+        {
+            "stream_id": stream_id,
+            "procedure": procedure.encode("utf-8"),
+            "realm": realm,
+            "mode": mode,
+            "args": args,
+            "deadline_ms": deadline_ms,
+            "caller": caller,
+            "source_route": source_route,
+            "retry_budget": retry_budget,
+        }
+    )
+    return frame
+
+
+@dataclass
+class StreamOpenInfo:
+    stream_id: bytes
+    procedure: str
+    realm: bytes
+    mode: str
+    args: cbor.Value
+    deadline_ms: int
+    caller: bytes
+
+
+def parse_stream_open(value: cbor.Value) -> StreamOpenInfo:
+    if not isinstance(value, dict) or value.get("frame_type") != "stream_open":
+        raise ParseFrameError("frame_type is not \"stream_open\"")
+    mode = value.get("mode")
+    if mode not in STREAM_MODES:
+        raise ParseFrameError(f"field 'mode' must be one of {STREAM_MODES}")
+    procedure_bytes = value.get("procedure")
+    if not isinstance(procedure_bytes, bytes):
+        raise ParseFrameError("field 'procedure' must be a byte string")
+    try:
+        procedure = procedure_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ParseFrameError("field 'procedure' is not valid UTF-8") from e
+    deadline_ms = value.get("deadline_ms")
+    if not isinstance(deadline_ms, int) or isinstance(deadline_ms, bool):
+        raise ParseFrameError("field 'deadline_ms' must be an integer")
+    if "args" not in value:
+        raise ParseFrameError("field 'args' is required")
+    return StreamOpenInfo(
+        stream_id=_require_bytes(value, "stream_id", 16),
+        procedure=procedure,
+        realm=_require_bytes(value, "realm", 32),
+        mode=mode,
+        args=value["args"],
+        deadline_ms=deadline_ms,
+        caller=_require_bytes(value, "caller", 32),
+    )
+
+
+def build_stream_data(stream_id: bytes, seq: int, body: cbor.Value, signer: bytes, *, encoding: str = "raw") -> dict:
+    if encoding not in STREAM_ENCODINGS:
+        raise ValueError(f"encoding must be one of {STREAM_ENCODINGS}, got {encoding!r}")
+    if encoding == "raw" and not isinstance(body, bytes):
+        raise ValueError("body must be bytes when encoding is 'raw'")
+    frame = base("stream_data", 0)
+    frame.update({"stream_id": stream_id, "seq": seq, "encoding": encoding, "body": body, "signer": signer})
+    return frame
+
+
+@dataclass
+class StreamDataInfo:
+    stream_id: bytes
+    seq: int
+    encoding: str
+    body: cbor.Value
+
+
+def parse_stream_data(value: cbor.Value) -> StreamDataInfo:
+    if not isinstance(value, dict) or value.get("frame_type") != "stream_data":
+        raise ParseFrameError("frame_type is not \"stream_data\"")
+    encoding = value.get("encoding", "raw")
+    if encoding not in STREAM_ENCODINGS:
+        raise ParseFrameError(f"field 'encoding' must be one of {STREAM_ENCODINGS}")
+    return StreamDataInfo(
+        stream_id=_require_bytes(value, "stream_id", 16),
+        seq=_require_uint(value, "seq"),
+        encoding=encoding,
+        body=value.get("body", b""),
+    )
+
+
+def build_stream_end(stream_id: bytes, role: str, signer: bytes) -> dict:
+    if role not in STREAM_END_ROLES:
+        raise ValueError(f"role must be one of {STREAM_END_ROLES}, got {role!r}")
+    frame = base("stream_end", 0)
+    frame.update({"stream_id": stream_id, "role": role, "signer": signer})
+    return frame
+
+
+@dataclass
+class StreamEndInfo:
+    stream_id: bytes
+    role: str
+
+
+def parse_stream_end(value: cbor.Value) -> StreamEndInfo:
+    if not isinstance(value, dict) or value.get("frame_type") != "stream_end":
+        raise ParseFrameError("frame_type is not \"stream_end\"")
+    role = value.get("role", "both")
+    if role not in STREAM_END_ROLES:
+        raise ParseFrameError(f"field 'role' must be one of {STREAM_END_ROLES}")
+    return StreamEndInfo(stream_id=_require_bytes(value, "stream_id", 16), role=role)
+
+
+def build_stream_error(stream_id: bytes, code: str, message: str, signer: bytes) -> dict:
+    frame = base("stream_error", 0)
+    frame.update(
+        {
+            "stream_id": stream_id,
+            "code": code.encode("utf-8"),
+            "message": message.encode("utf-8"),
+            "signer": signer,
+        }
+    )
+    return frame
+
+
+def _require_text_bytes(value: dict, field: str, default: str = "") -> str:
+    raw = value.get(field)
+    if raw is None:
+        return default
+    if not isinstance(raw, bytes):
+        raise ParseFrameError(f"field {field!r} must be a byte string")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ParseFrameError(f"field {field!r} is not valid UTF-8") from e
+
+
+def parse_stream_error(value: cbor.Value) -> StreamAbortedError:
+    if not isinstance(value, dict) or value.get("frame_type") != "stream_error":
+        raise ParseFrameError("frame_type is not \"stream_error\"")
+    return StreamAbortedError(
+        code=_require_text_bytes(value, "code"),
+        message=_require_text_bytes(value, "message"),
+    )
+
+
+def build_stream_reply(stream_id: bytes, payload: cbor.Value, responded_by: bytes) -> dict:
+    frame = base("stream_reply", 0)
+    frame.update({"stream_id": stream_id, "payload": payload, "responded_by": responded_by})
+    return frame
+
+
+@dataclass
+class StreamReplyInfo:
+    stream_id: bytes
+    payload: cbor.Value
+    responded_by: bytes
+
+
+def parse_stream_reply(value: cbor.Value) -> StreamReplyInfo:
+    if not isinstance(value, dict) or value.get("frame_type") != "stream_reply":
+        raise ParseFrameError("frame_type is not \"stream_reply\"")
+    if "payload" not in value:
+        raise ParseFrameError("field 'payload' is required")
+    return StreamReplyInfo(
+        stream_id=_require_bytes(value, "stream_id", 16),
+        payload=value["payload"],
+        responded_by=_require_bytes(value, "responded_by", 32),
+    )
+
+
+#: What a stream reader gets back from one inbound frame: a data chunk,
+#: end-of-stream (with which side closed), or a terminal reply.
+StreamInbound = StreamDataInfo | StreamEndInfo | StreamReplyInfo
+
+
+def parse_stream_inbound(value: cbor.Value) -> StreamInbound:
+    """Parse a decoded frame arriving on an open stream session -- STREAM_DATA, STREAM_END, or STREAM_REPLY. Raises StreamAbortedError for STREAM_ERROR (the stream is over) rather than returning it."""
+    if not isinstance(value, dict):
+        raise ParseFrameError("a stream frame must be a CBOR map")
+    frame_type = value.get("frame_type")
+    if frame_type == "stream_data":
+        return parse_stream_data(value)
+    if frame_type == "stream_end":
+        return parse_stream_end(value)
+    if frame_type == "stream_reply":
+        return parse_stream_reply(value)
+    if frame_type == "stream_error":
+        raise parse_stream_error(value)
+    raise ParseFrameError(f"frame_type {frame_type!r} is not a stream delivery")
+
+
 def parse_event(value: cbor.Value) -> EventInfo:
     """Parse a decoded frame as an EVENT. Any non-EVENT frame is an error, not silently skipped -- a caller waiting specifically for a pubsub delivery has no reason to expect anything else to legitimately arrive first."""
     if not isinstance(value, dict) or value.get("frame_type") != "event":
