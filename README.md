@@ -36,18 +36,31 @@ order every sibling SDK was built in:
   at all -- every SDK's convention is 1/0). Verified byte-for-byte
   against the real Erlang encoder itself (see
   `tests/test_cbor_golden_vectors.py`), not just self-consistency.
+- **BLAKE3** (`macula.blake3_hash`) -- content-addressing, backed by the
+  same Rust `blake3` crate `macula_crypto_nif` uses (not Erlang's own
+  pure fallback, which its own source documents as NOT cryptographically
+  real BLAKE3). Cross-verified against the real NIF's output.
+- **The frame envelope** (`macula.frame`) -- Ed25519-signed frame
+  construction/verification and the length-prefixed wire codec, matching
+  `macula_frame.erl` exactly, including its frame-level
+  boolean-as-text-string convention (distinct from `macula.cbor`'s own
+  payload-level 1/0 convention -- these are two different rules for two
+  different layers, confirmed by reading the Erlang source directly). A
+  signed CONNECT frame built entirely by this module was independently
+  decoded and signature-verified by the real, unmodified Erlang
+  `macula_frame` module -- genuine cross-language wire and cryptographic
+  compatibility, not just self-consistency.
+- **QUIC transport + CONNECT/HELLO handshake** (`macula.connection`) --
+  built on `aioquic`. **Live-verified against the real production
+  station fleet** (`station-de-frankfurt.macula.io`): a real handshake
+  completes, the HELLO's signature verifies, `accepted` is `true`.
 
-**Not yet built**: BLAKE3 content-addressing, the QUIC transport and
-CONNECT/HELLO handshake, unary RPC, PubSub, content transfer, and
-streaming RPC (all four, both caller and provider roles) -- the rest of
-this phase's scope. Direct-dial, periodic re-advertise, UCAN, cert-chain
-verification, the supervised pubsub wrapper, and RPC telemetry facts are
-explicitly OUT of scope for this first pass, matching the order every
-other Macula SDK was built and reviewed in.
-
-No live-fleet verification has happened yet -- there is no network layer
-to verify against. `pytest -m live` will dial the real production
-station fleet once the transport exists.
+**Not yet built**: unary RPC, PubSub, content transfer, and streaming RPC
+(all four, both caller and provider roles) -- the rest of this phase's
+scope. Direct-dial, periodic re-advertise, UCAN, cert-chain verification,
+the supervised pubsub wrapper, and RPC telemetry facts are explicitly OUT
+of scope for this first pass, matching the order every other Macula SDK
+was built and reviewed in.
 
 ## Development
 
@@ -55,7 +68,7 @@ station fleet once the transport exists.
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest              # offline tests only
-.venv/bin/pytest -m live      # + live-fleet tests, once they exist
+.venv/bin/pytest -m live      # + live-fleet tests (dials the real production fleet)
 ```
 
 This repo pins Python 3.13 via `.tool-versions` -- `aioquic`'s C
