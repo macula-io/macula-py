@@ -20,6 +20,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
@@ -40,14 +41,29 @@ class LoadKeyError(Exception):
     """Raised by :func:`KeyPair.load` when the file isn't a key file this module wrote."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class KeyPair:
     """A Macula peer identity: an Ed25519 keypair whose public key (NodeId)
     satisfies the puzzle difficulty it was minted for.
+
+    `eq=False`: the auto-generated dataclass equality/hash would compare
+    the underlying `cryptography` key objects, which have no meaningful
+    `__eq__` of their own -- two KeyPairs built from the SAME seed would
+    compare unequal, and `hash(kp)` would raise TypeError outright
+    (verified: `Ed25519PublicKey` is unhashable). Identity equality is
+    node_id() equality; hash the same bytes.
     """
 
     _private: Ed25519PrivateKey
     _public: Ed25519PublicKey
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, KeyPair):
+            return NotImplemented
+        return self.node_id() == other.node_id()
+
+    def __hash__(self) -> int:
+        return hash(self.node_id())
 
     def node_id(self) -> bytes:
         """The 32-byte Ed25519 public key this identity is known by on the wire (CONNECT/HELLO's node_id field)."""
@@ -71,6 +87,8 @@ class KeyPair:
 
         The same check every station runs on CONNECT (macula_identity:puzzle_valid/2).
         """
+        if difficulty < 0:
+            raise ValueError(f"difficulty must be >= 0, got {difficulty}")
         return _leading_zero_bits(self.puzzle_evidence()) >= difficulty
 
     def sign(self, data: bytes) -> bytes:
@@ -85,7 +103,13 @@ class KeyPair:
         try:
             Ed25519PublicKey.from_public_bytes(node_id).verify(sig, data)
             return True
-        except Exception:
+        except InvalidSignature:
+            # The only exception `cryptography`'s own verify() raises for
+            # a genuinely bad/wrong-length signature -- confirmed by
+            # reading its source, not assumed. A bare `except Exception`
+            # here would also swallow a caller's own bug (e.g. passing a
+            # str where bytes are required raises TypeError) as a silent
+            # False instead of surfacing it.
             return False
 
     @staticmethod
@@ -119,6 +143,15 @@ class KeyPair:
         tmp = path.with_suffix(path.suffix + ".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
+            # The `0o600` above is the mode `open()` would give a file it
+            # CREATES -- it is silently ignored if `tmp` already existed
+            # (e.g. left over from a prior crashed write, or planted by
+            # another process) and O_TRUNC just truncates that file's
+            # EXISTING permissions in place. Force it explicitly so this
+            # method's own 0600 guarantee holds regardless of what was
+            # already at `tmp`, instead of trusting a mode argument that
+            # only sometimes applies.
+            os.fchmod(fd, 0o600)
             os.write(fd, blob)
         finally:
             os.close(fd)

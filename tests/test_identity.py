@@ -109,6 +109,51 @@ def test_load_rejects_a_garbage_file(tmp_path: Path):
         KeyPair.load(path)
 
 
+def test_save_forces_0600_even_over_a_preexisting_weaker_permissioned_tmp_file(tmp_path: Path):
+    # os.open's mode argument only applies when it CREATES the file; if
+    # `<path>.tmp` already exists (a prior crashed write, or planted by
+    # another process), O_TRUNC truncates it in place without touching
+    # its existing permission bits. Plant one at 0644 first.
+    path = tmp_path / "identity.key"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.touch(mode=0o644)
+
+    kp = KeyPair.generate(puzzle=False)
+    kp.save(path)
+
+    assert (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_keypair_equality_and_hash_are_based_on_node_id():
+    seed = bytes(range(32))
+    a = KeyPair.from_seed(seed)
+    b = KeyPair.from_seed(seed)
+    other = KeyPair.generate(puzzle=False)
+
+    assert a == b
+    assert hash(a) == hash(b)
+    assert a != other
+    # Must be usable as a dict key / set member -- the default dataclass
+    # equality (comparing the underlying cryptography key objects, which
+    # have no meaningful __eq__/__hash__) would make this crash or fail.
+    assert {a, b, other} == {a, other}
+
+
+def test_verify_with_wrong_argument_types_raises_instead_of_silently_returning_false():
+    kp = KeyPair.generate(puzzle=False)
+    sig = kp.sign(b"hello")
+    # A bare `except Exception` around the underlying verify() call would
+    # swallow this as a silent False, masking a real caller bug.
+    with pytest.raises(TypeError):
+        KeyPair.verify(kp.node_id(), "hello", sig)  # str, not bytes
+
+
+def test_has_valid_puzzle_rejects_negative_difficulty():
+    kp = KeyPair.generate(puzzle=False)
+    with pytest.raises(ValueError):
+        kp.has_valid_puzzle(-1)
+
+
 def test_load_rejects_a_tampered_public_key(tmp_path: Path):
     kp = KeyPair.generate(puzzle=False)
     path = tmp_path / "identity.key"

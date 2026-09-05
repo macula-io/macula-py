@@ -179,6 +179,45 @@ def test_decode_rejects_a_cbor_boolean_simple_value():
         cbor.decode(bytes([(7 << 5) | 21]))
 
 
+def test_encode_rejects_nan_and_infinity():
+    # Erlang arithmetic structurally cannot produce either -- confirmed
+    # live that the real station's decoder rejects both with bad_frame,
+    # not a value. A caller must find out at encode time, not silently
+    # send bytes the peer will only ever drop.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError):
+            cbor.encode(bad)
+
+
+def test_decode_rejects_nan_and_infinity_at_every_float_width():
+    import struct as _struct
+
+    nan64 = bytes([(7 << 5) | 27]) + _struct.pack(">d", float("nan"))
+    inf32 = bytes([(7 << 5) | 26]) + _struct.pack(">f", float("inf"))
+    with pytest.raises(cbor.DecodeError):
+        cbor.decode(nan64)
+    with pytest.raises(cbor.DecodeError):
+        cbor.decode(inf32)
+
+
+def test_decode_of_deeply_nested_input_raises_decode_error_not_recursion_error():
+    # ~1500 levels of single-element nested arrays -- adversarial/corrupt
+    # input, not anything a real macula frame would ever contain.
+    depth = 1500
+    encoded = bytes([0x81]) * depth + cbor.encode(0)
+    with pytest.raises(cbor.DecodeError):
+        cbor.decode(encoded)
+
+
+def test_decode_of_a_map_with_an_unhashable_key_raises_decode_error_not_type_error():
+    # major 5 (map, 1 pair), key = major 4 empty array, value = 1.
+    # Erlang has no restriction on map key types; Python dict keys must
+    # be hashable, so a decoded list/dict key can't become one.
+    encoded = bytes([0xA1, 0x80, 0x01])
+    with pytest.raises(cbor.DecodeError):
+        cbor.decode(encoded)
+
+
 def test_decode_one_reports_how_many_bytes_it_consumed():
     encoded = cbor.encode(42) + cbor.encode("trailer")
     value, consumed = cbor.decode_one(encoded)
