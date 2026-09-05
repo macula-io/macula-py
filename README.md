@@ -3,8 +3,20 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/macula-io/macula-py/ci.yml?branch=main&label=CI)](https://github.com/macula-io/macula-py/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-support-ea4aaa.svg?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/rgfaber)
 
-**Python port of the Macula mesh wire protocol.**
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/macula-py-full-dark.svg">
+    <img src="assets/macula-py-full-light.svg" alt="Macula" width="320">
+  </picture>
+</p>
+
+<p align="center">
+  <strong>Python port of the Macula mesh wire protocol</strong>
+</p>
+
+---
 
 ## What is this?
 
@@ -18,10 +30,58 @@ application networks; a **station** is the relay/DHT node, and this
 package is what a **leaf** -- anything that isn't itself a station --
 uses to join it.
 
+## Quick start
+
+Also lives as a runnable example -- `python examples/quickstart.py`:
+
+```python
+import asyncio
+import uuid
+
+from macula import frame
+from macula.connection import Session
+from macula.identity import KeyPair
+
+STATION_HOST = "station-de-frankfurt.macula.io"
+STATION_PORT = 4433
+REALM = bytes(32)
+PROCEDURE = f"macula_py.quickstart_echo.{uuid.uuid4().hex}"
+
+
+async def main() -> None:
+    # Puzzle-hardened identity -- required. An unhardened identity fails
+    # the handshake silently (QUIC/TLS looks healthy, HELLO never accepts).
+    provider_identity = KeyPair.generate()
+    caller_identity = KeyPair.generate()
+
+    async with await Session.connect(STATION_HOST, STATION_PORT, provider_identity) as provider:
+        await provider.advertise(REALM, PROCEDURE)
+        await asyncio.sleep(0.5)  # ADVERTISE is fire-and-forget; give it a moment to land
+
+        async def echo(payload):
+            return payload
+
+        serve_task = asyncio.create_task(provider.serve_one_call(lambda realm, proc: echo, timeout=10))
+
+        async with await Session.connect(STATION_HOST, STATION_PORT, caller_identity) as caller:
+            deadline_ms = frame.current_millis() + 5_000
+            response = await caller.call(PROCEDURE, REALM, "hello", deadline_ms, timeout=5)
+
+        await serve_task
+        print(response)
+
+
+asyncio.run(main())
+```
+
+Two identities are used (a provider and a caller) because a station
+kicks a connection the instant a second one arrives under the same
+identity -- the same reason every one of this SDK's own live tests uses
+separate `KeyPair`s for each role.
+
 ## Status, 2026-09-05 (phase 1 basics complete, all live-verified)
 
-**In progress, greenfield build.** Built and verified so far, in the
-order every sibling SDK was built in:
+Built and verified in the order every sibling SDK was built in:
 
 - **Identity** (`macula.identity`) -- Ed25519 keypairs, S/Kademlia
   puzzle-hardened generation (matches `macula_identity.erl`'s own
@@ -146,3 +206,9 @@ threaded 3.14 both build cleanly; 3.13 is pinned for reproducibility.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+---
+
+<p align="center">
+  <sub>Built with the BEAM's protocol, ported to Python -- <a href="https://github.com/sponsors/rgfaber">sponsor the work</a> if this saved you some time</sub>
+</p>
