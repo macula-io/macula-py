@@ -18,7 +18,7 @@ application networks; a **station** is the relay/DHT node, and this
 package is what a **leaf** -- anything that isn't itself a station --
 uses to join it.
 
-## Status, 2026-09-05
+## Status, 2026-09-05 (content transfer)
 
 **In progress, greenfield build.** Built and verified so far, in the
 order every sibling SDK was built in:
@@ -72,12 +72,28 @@ order every sibling SDK was built in:
   ADVERTISE-needs-a-moment finding, documented in
   `tests/test_pubsub_live.py`.
 
-**Not yet built**: content transfer and streaming RPC (both caller and
-provider roles) -- the rest of this phase's scope. Direct-dial, periodic
-re-advertise, UCAN, cert-chain verification, the supervised pubsub
-wrapper, and RPC telemetry facts are explicitly OUT of scope for this
-first pass, matching the order every other Macula SDK was built and
-reviewed in.
+- **Content transfer** (`macula.manifest`, `macula.content`) -- fixed-size
+  chunking, Merkle-root computation, and MCID derivation matching
+  `macula_manifest.erl` exactly (cross-verified byte-for-byte against the
+  real Erlang implementation for a 3-chunk input, including the
+  odd-chunk-paired-with-itself fold case), plus `put`/`get` over the
+  `_content.*` RPCs on a dedicated QUIC stream. **Live-verified**: single
+  block and chunked (multi-block) put/get round trips, not_found
+  handling, and cross-session put/get all pass against the real fleet.
+  Found and fixed a genuine bug along the way in **macula-station**
+  itself (not this SDK, and not SDK-specific -- it affected every
+  client): `_content.put_manifest` crashed with a generic
+  `temporary_relay_failure` for any manifest whose `name` wasn't already
+  an interned Erlang atom, i.e. any real content name. Root-caused via a
+  standalone reproduction against the real unmodified station code,
+  fixed at the source (macula-io/macula-station), and confirmed live
+  against the production fleet before calling this piece done.
+
+**Not yet built**: streaming RPC (both caller and provider roles) -- the
+rest of this phase's scope. Direct-dial, periodic re-advertise, UCAN,
+cert-chain verification, the supervised pubsub wrapper, and RPC
+telemetry facts are explicitly OUT of scope for this first pass,
+matching the order every other Macula SDK was built and reviewed in.
 
 ## Development
 

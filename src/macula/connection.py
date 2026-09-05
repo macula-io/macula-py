@@ -250,6 +250,34 @@ class Session:
         except Exception as e:
             return frame.build_call_error(call_info.call_id, bolt4.UNKNOWN_ERROR, self_pub, detail=str(e))
 
+    async def open_dedicated_stream(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """Open a fresh dedicated QUIC stream (streaming RPC, content transfer) -- separate from the control stream this Session's own call()/serve_one_call()/publish()/subscribe() use."""
+        return await self._protocol.create_stream()
+
+    async def call_on_stream(
+        self,
+        writer: asyncio.StreamWriter,
+        reader: asyncio.StreamReader,
+        procedure: str,
+        realm: bytes,
+        payload: cbor.Value,
+        deadline_ms: int,
+        timeout: float,
+    ) -> frame.CallResponse:
+        """As :meth:`call`, but on a caller-supplied dedicated stream instead of the control stream.
+
+        No call_id filtering needed here (unlike :meth:`call`): a
+        dedicated stream carries only this one exchange's frames, so the
+        first frame to arrive IS the response -- matching every sibling
+        SDK's own dedicated-stream call primitive.
+        """
+        call_id = os.urandom(16)
+        call_frame = frame.sign(frame.build_call(call_id, procedure, realm, payload, deadline_ms, self.identity.node_id()), self.identity)
+        writer.write(frame.encode_frame(call_frame))
+        await writer.drain()
+        value = await asyncio.wait_for(_recv_one_frame(reader), timeout=timeout)
+        return frame.parse_call_response(value)
+
     async def close(self) -> None:
         """Close the connection. Idempotent."""
         if self._closed:
