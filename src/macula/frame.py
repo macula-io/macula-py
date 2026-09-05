@@ -446,3 +446,97 @@ def build_unadvertise(realm: bytes, procedure: str, advertiser: bytes) -> dict:
         }
     )
     return frame
+
+
+#: ---------------------------------------------------------------------
+#: PUBLISH / SUBSCRIBE / UNSUBSCRIBE / EVENT -- PubSub, both roles.
+#: `topic` is `binary()` on the wire (confirmed: macula_frame.erl's own
+#: `publish/1`/`subscribe/1` guards use `is_binary(T)`, no atom/text
+#: conversion) -- UTF-8-encoded bytes here, same convention as `procedure`.
+#: `publisher_sig` (the separate end-to-end signature surviving relay
+#: beyond one hop) is NOT implemented this phase -- deferred alongside
+#: direct-dial/UCAN/re-advertise, not silently dropped.
+#: ---------------------------------------------------------------------
+
+
+def build_publish(topic: str, realm: bytes, publisher: bytes, seq: int, payload: cbor.Value, published_at_ms: int, *, ttl_ms: int | None = None) -> dict:
+    frame = base("publish", 0)
+    frame.update(
+        {
+            "topic": topic.encode("utf-8"),
+            "realm": realm,
+            "publisher": publisher,
+            "seq": seq,
+            "payload": payload,
+            "published_at_ms": published_at_ms,
+            "ttl_ms": ttl_ms,
+        }
+    )
+    return frame
+
+
+def build_subscribe(topic: str, realm: bytes, subscriber: bytes) -> dict:
+    frame = base("subscribe", 0)
+    frame.update(
+        {
+            "topic": topic.encode("utf-8"),
+            "realm": realm,
+            "subscriber": subscriber,
+            "filter": None,
+            "options": {},
+        }
+    )
+    return frame
+
+
+def build_unsubscribe(topic: str, realm: bytes, subscriber: bytes) -> dict:
+    frame = base("unsubscribe", 0)
+    frame.update(
+        {
+            "topic": topic.encode("utf-8"),
+            "realm": realm,
+            "subscriber": subscriber,
+        }
+    )
+    return frame
+
+
+@dataclass
+class EventInfo:
+    """What a subscriber actually receives -- parsed fields of an EVENT frame."""
+
+    topic: str
+    realm: bytes
+    publisher: bytes
+    seq: int
+    payload: cbor.Value
+    delivered_via: str
+
+
+def _require_topic_bytes(frame: dict, field: str = "topic") -> str:
+    value = frame.get(field)
+    if not isinstance(value, bytes):
+        raise ParseFrameError(f"field {field!r} must be a byte string")
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ParseFrameError(f"field {field!r} is not valid UTF-8") from e
+
+
+def parse_event(value: cbor.Value) -> EventInfo:
+    """Parse a decoded frame as an EVENT. Any non-EVENT frame is an error, not silently skipped -- a caller waiting specifically for a pubsub delivery has no reason to expect anything else to legitimately arrive first."""
+    if not isinstance(value, dict) or value.get("frame_type") != "event":
+        raise ParseFrameError("frame_type is not \"event\"")
+    delivered_via = value.get("delivered_via")
+    if delivered_via not in ("plumtree", "dht", "direct"):
+        raise ParseFrameError("field 'delivered_via' must be one of plumtree/dht/direct")
+    if "payload" not in value:
+        raise ParseFrameError("field 'payload' is required")
+    return EventInfo(
+        topic=_require_topic_bytes(value),
+        realm=_require_bytes(value, "realm", 32),
+        publisher=_require_bytes(value, "publisher", 32),
+        seq=_require_uint(value, "seq"),
+        payload=value["payload"],
+        delivered_via=delivered_via,
+    )

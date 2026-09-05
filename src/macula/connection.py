@@ -182,6 +182,31 @@ class Session:
             except frame.ParseFrameError:
                 continue  # matching call_id, unexpected shape -- keep waiting
 
+    async def publish(self, topic: str, realm: bytes, payload: cbor.Value, seq: int, *, ttl_ms: int | None = None) -> None:
+        """Send a signed PUBLISH. Fire-and-forget -- no reply is expected on the wire; a subscriber (this session included, if subscribed to the same topic/realm) receives an EVENT asynchronously, read via :meth:`recv_event`."""
+        published_at_ms = frame.current_millis()
+        await self.send_frame(frame.build_publish(topic, realm, self.identity.node_id(), seq, payload, published_at_ms, ttl_ms=ttl_ms))
+
+    async def subscribe(self, topic: str, realm: bytes) -> None:
+        await self.send_frame(frame.build_subscribe(topic, realm, self.identity.node_id()))
+
+    async def unsubscribe(self, topic: str, realm: bytes) -> None:
+        await self.send_frame(frame.build_unsubscribe(topic, realm, self.identity.node_id()))
+
+    async def recv_event(self, timeout: float | None = None) -> frame.EventInfo:
+        """Read the next frame and parse it as an EVENT, bounded by `timeout`.
+
+        Any non-EVENT frame received first is an error, not silently
+        skipped -- unlike :meth:`call`'s response wait, a caller waiting
+        specifically for a pubsub delivery has no reason to expect
+        anything else to legitimately arrive first. A permissive
+        "skip anything that isn't an EVENT" loop (needed once PUBLISH/
+        SUBSCRIBE/CALL share a control stream concurrently) is the
+        supervised-pubsub-wrapper's job, out of scope this phase.
+        """
+        value = await self.recv_frame(timeout=timeout)
+        return frame.parse_event(value)
+
     async def advertise(self, realm: bytes, procedure: str) -> None:
         """Register this connection as the handler for (realm, procedure). Fire-and-forget on the wire."""
         await self.send_frame(frame.build_advertise(realm, procedure, self.identity.node_id()))

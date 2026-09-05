@@ -62,12 +62,21 @@ order every sibling SDK was built in:
   but a genuine advertise+serve+call round trip returning an actual
   RESULT payload from an actual running handler, plus a handler that
   raises correctly reporting `unknown_error` with detail.
+- **PubSub, both roles** (`Session.publish`/`Session.subscribe`/
+  `Session.unsubscribe`/`Session.recv_event`). **Live-verified**: a real
+  publish/subscribe round trip within one session, a real cross-session
+  delivery (separate identities, separate connections), and unsubscribe
+  actually stopping delivery. Real finding, root-caused: SUBSCRIBE needs
+  a moment to register at the station before a PUBLISH sent immediately
+  afterward is reliably delivered -- same shape as RPC's own
+  ADVERTISE-needs-a-moment finding, documented in
+  `tests/test_pubsub_live.py`.
 
-**Not yet built**: PubSub, content transfer, and streaming RPC (both
-caller and provider roles) -- the rest of this phase's scope. Direct-dial,
-periodic re-advertise, UCAN, cert-chain verification, the supervised
-pubsub wrapper, and RPC telemetry facts are explicitly OUT of scope for
-this first pass, matching the order every other Macula SDK was built and
+**Not yet built**: content transfer and streaming RPC (both caller and
+provider roles) -- the rest of this phase's scope. Direct-dial, periodic
+re-advertise, UCAN, cert-chain verification, the supervised pubsub
+wrapper, and RPC telemetry facts are explicitly OUT of scope for this
+first pass, matching the order every other Macula SDK was built and
 reviewed in.
 
 ## Development
