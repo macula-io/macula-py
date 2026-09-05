@@ -1,3 +1,3 @@
 """Native Python client for the Macula mesh wire protocol."""
 
-__all__ = ["cbor", "identity"]
+__all__ = ["blake3_hash", "cbor", "identity"]
