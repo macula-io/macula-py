@@ -22,17 +22,30 @@ phase) rather than built ahead of need.
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from typing import Awaitable, Callable
 
 from aioquic.asyncio.client import connect as aioquic_connect
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
 
-from . import cbor, frame
+from . import bolt4, cbor, frame
 from .identity import KeyPair
 
 ALPN = "macula"
+
+#: Provider-side handler for one advertised (realm, procedure). Raise any
+#: exception for a failure -- reported to the caller as `unknown_error`
+#: with `str(exception)` as detail; no distinction between an
+#: "expected" application failure and a crash in this phase (UCAN/policy,
+#: which is where the reference draws that line, is out of scope here).
+CallHandler = Callable[[cbor.Value], Awaitable[cbor.Value]]
+
+#: Resolves an inbound CALL's (realm, procedure) to a handler, or None if nothing is advertised for it.
+CallLookup = Callable[[bytes, str], "CallHandler | None"]
 DEFAULT_HANDSHAKE_TIMEOUT = 30.0
 
 
@@ -131,6 +144,86 @@ class Session:
         if not isinstance(value, dict):
             raise frame.ParseFrameError("a frame must be a CBOR map at the top level")
         return value
+
+    async def call(
+        self,
+        procedure: str,
+        realm: bytes,
+        payload: cbor.Value,
+        deadline_ms: int,
+        timeout: float,
+        *,
+        ucan_token: bytes = b"",
+    ) -> frame.CallResponse:
+        """Send a signed CALL and wait for the matching RESULT or ERROR, correlated by call_id.
+
+        Known v1 limitation (control stream only, matching every sibling
+        Macula SDK): any frame that arrives before the match (e.g. an
+        EVENT from an active subscription) is discarded, not queued --
+        correct for a caller doing one thing at a time on the control
+        stream, not yet correct for CALL and PUBLISH/SUBSCRIBE used
+        concurrently on it. A pool/multiplexing layer (out of scope for
+        this phase) is what every sibling SDK builds to lift this.
+        """
+        call_id = os.urandom(16)
+        call_frame = frame.build_call(call_id, procedure, realm, payload, deadline_ms, self.identity.node_id(), ucan_token=ucan_token)
+        await self.send_frame(call_frame)
+
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"no response for call_id {call_id.hex()} within {timeout}s")
+            value = await self.recv_frame(timeout=remaining)
+            if frame.frame_call_id(value) != call_id:
+                continue  # not ours -- see this method's doc on the limitation
+            try:
+                return frame.parse_call_response(value)
+            except frame.ParseFrameError:
+                continue  # matching call_id, unexpected shape -- keep waiting
+
+    async def advertise(self, realm: bytes, procedure: str) -> None:
+        """Register this connection as the handler for (realm, procedure). Fire-and-forget on the wire."""
+        await self.send_frame(frame.build_advertise(realm, procedure, self.identity.node_id()))
+
+    async def unadvertise(self, realm: bytes, procedure: str) -> None:
+        await self.send_frame(frame.build_unadvertise(realm, procedure, self.identity.node_id()))
+
+    async def serve_one_call(self, lookup: CallLookup, timeout: float) -> None:
+        """The provider role's counterpart to :meth:`call`: block for the next inbound CALL, bounded by `timeout`, look it up via `lookup`, invoke the matching handler, and send the resulting RESULT or ERROR back.
+
+        Any non-CALL frame that arrives first (e.g. the station's own
+        unprompted advertise broadcasts for its built-in _content.*
+        procedures, confirmed live elsewhere in this org's own SDK work)
+        is discarded, not queued -- same "control stream, one thing at a
+        time" limitation :meth:`call` documents.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("timed out waiting for an inbound CALL")
+            value = await self.recv_frame(timeout=remaining)
+            if not isinstance(value, dict) or value.get("frame_type") != "call":
+                continue
+            try:
+                call_info = frame.parse_call(value)
+            except frame.ParseFrameError:
+                continue
+            reply = await self._build_call_reply(call_info, lookup)
+            await self.send_frame(reply)
+            return
+
+    async def _build_call_reply(self, call_info: frame.CallInfo, lookup: CallLookup) -> dict:
+        self_pub = self.identity.node_id()
+        handler = lookup(call_info.realm, call_info.procedure)
+        if handler is None:
+            return frame.build_call_error(call_info.call_id, bolt4.UNKNOWN_NEXT_PEER, self_pub)
+        try:
+            value = await handler(call_info.payload)
+            return frame.build_result(call_info.call_id, value, self_pub)
+        except Exception as e:
+            return frame.build_call_error(call_info.call_id, bolt4.UNKNOWN_ERROR, self_pub, detail=str(e))
 
     async def close(self) -> None:
         """Close the connection. Idempotent."""

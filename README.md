@@ -54,13 +54,21 @@ order every sibling SDK was built in:
   built on `aioquic`. **Live-verified against the real production
   station fleet** (`station-de-frankfurt.macula.io`): a real handshake
   completes, the HELLO's signature verifies, `accepted` is `true`.
+- **Unary RPC, both roles** (`Session.call`/`Session.advertise`/
+  `Session.serve_one_call`) -- BOLT#4 error taxonomy (`macula.bolt4`).
+  **Live-verified to the standard this org's own SDK work holds real
+  proof to**: not just "reached the call stage with a clean
+  `unknown_next_peer`" (which only proves the caller's own path works),
+  but a genuine advertise+serve+call round trip returning an actual
+  RESULT payload from an actual running handler, plus a handler that
+  raises correctly reporting `unknown_error` with detail.
 
-**Not yet built**: unary RPC, PubSub, content transfer, and streaming RPC
-(all four, both caller and provider roles) -- the rest of this phase's
-scope. Direct-dial, periodic re-advertise, UCAN, cert-chain verification,
-the supervised pubsub wrapper, and RPC telemetry facts are explicitly OUT
-of scope for this first pass, matching the order every other Macula SDK
-was built and reviewed in.
+**Not yet built**: PubSub, content transfer, and streaming RPC (both
+caller and provider roles) -- the rest of this phase's scope. Direct-dial,
+periodic re-advertise, UCAN, cert-chain verification, the supervised
+pubsub wrapper, and RPC telemetry facts are explicitly OUT of scope for
+this first pass, matching the order every other Macula SDK was built and
+reviewed in.
 
 ## Development
 

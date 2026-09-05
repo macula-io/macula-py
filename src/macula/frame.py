@@ -32,7 +32,7 @@ import os
 import time
 from dataclasses import dataclass
 
-from . import cbor
+from . import bolt4, cbor
 from .identity import KeyPair
 
 SIG_DOMAIN = b"macula-v2-frame\x00"
@@ -247,3 +247,202 @@ def parse_hello(frame: cbor.Value) -> HelloInfo:
         negotiated_capabilities=_require_uint(frame, "negotiated_capabilities"),
         refusal_code=refusal_code,
     )
+
+
+#: ---------------------------------------------------------------------
+#: CALL / RESULT / ERROR -- unary RPC, both caller and provider roles.
+#: `procedure` is `binary()` on the wire in the Erlang spec (a raw byte
+#: string, major 2), not text (major 3) -- confirmed by macula_frame.erl's
+#: own `call/1` guard (`is_binary(Proc)`, no atom-to-text conversion
+#: applied to it, unlike frame_type/accepted/etc.), so it's UTF-8-encoded
+#: bytes here, not passed through cbor.py's `str`-as-text-string path.
+#: ---------------------------------------------------------------------
+
+
+def build_call(
+    call_id: bytes,
+    procedure: str,
+    realm: bytes,
+    payload: cbor.Value,
+    deadline_ms: int,
+    caller: bytes,
+    *,
+    source_route: bytes = b"",
+    retry_budget: int = 0,
+    ucan_token: bytes = b"",
+) -> dict:
+    frame = base("call", 0)
+    frame.update(
+        {
+            "call_id": call_id,
+            "procedure": procedure.encode("utf-8"),
+            "realm": realm,
+            "payload": payload,
+            "deadline_ms": deadline_ms,
+            "caller": caller,
+            "source_route": source_route,
+            "retry_budget": retry_budget,
+            "ucan_token": ucan_token,
+        }
+    )
+    return frame
+
+
+def build_result(call_id: bytes, payload: cbor.Value, responded_by: bytes, *, source_route_reverse: bytes = b"") -> dict:
+    frame = base("result", 0)
+    frame.update(
+        {
+            "call_id": call_id,
+            "payload": payload,
+            "responded_by": responded_by,
+            "source_route_reverse": source_route_reverse,
+        }
+    )
+    return frame
+
+
+def build_call_error(
+    call_id: bytes,
+    code: int,
+    reported_by: bytes,
+    *,
+    detail: str | None = None,
+    offending_hop: bytes | None = None,
+    source_route_partial: bytes = b"",
+) -> dict:
+    frame = base("error", 0)
+    frame.update(
+        {
+            "call_id": call_id,
+            "code": code,
+            "name": bolt4.name_for_code(code),
+            "reported_by": reported_by,
+            # `detail => binary() | undefined` on the wire -- bytes, not text.
+            "detail": detail.encode("utf-8") if detail is not None else None,
+            "offending_hop": offending_hop,
+            "source_route_partial": source_route_partial,
+        }
+    )
+    return frame
+
+
+@dataclass
+class CallInfo:
+    """The fields a provider needs from an inbound CALL."""
+
+    call_id: bytes
+    procedure: str
+    realm: bytes
+    payload: cbor.Value
+    deadline_ms: int
+    caller: bytes
+    ucan_token: bytes
+
+
+def parse_call(frame: cbor.Value) -> CallInfo:
+    if not isinstance(frame, dict) or frame.get("frame_type") != "call":
+        raise ParseFrameError("frame_type is not \"call\"")
+    call_id = _require_bytes(frame, "call_id", 16)
+    procedure_bytes = frame.get("procedure")
+    if not isinstance(procedure_bytes, bytes):
+        raise ParseFrameError("field 'procedure' must be a byte string")
+    try:
+        procedure = procedure_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ParseFrameError("field 'procedure' is not valid UTF-8") from e
+    realm = _require_bytes(frame, "realm", 32)
+    if "payload" not in frame:
+        raise ParseFrameError("field 'payload' is required")
+    deadline_ms = frame.get("deadline_ms")
+    if not isinstance(deadline_ms, int) or isinstance(deadline_ms, bool):
+        raise ParseFrameError("field 'deadline_ms' must be an integer")
+    caller = _require_bytes(frame, "caller", 32)
+    ucan_token = frame.get("ucan_token")
+    if ucan_token is None:
+        ucan_token = b""
+    elif not isinstance(ucan_token, bytes):
+        raise ParseFrameError("field 'ucan_token' must be a byte string")
+    return CallInfo(call_id, procedure, realm, frame["payload"], deadline_ms, caller, ucan_token)
+
+
+#: Result of parsing a RESULT or ERROR frame, correlated by call_id.
+@dataclass
+class CallResult:
+    payload: cbor.Value
+    responded_by: bytes
+
+
+@dataclass
+class CallError:
+    code: int
+    name: str
+    reported_by: bytes
+    detail: str | None
+
+
+CallResponse = CallResult | CallError
+
+
+def frame_call_id(value: cbor.Value) -> bytes | None:
+    """Extract this frame's call_id, regardless of frame type -- 16 bytes, or None if absent/malformed."""
+    if not isinstance(value, dict):
+        return None
+    call_id = value.get("call_id")
+    return call_id if isinstance(call_id, bytes) and len(call_id) == 16 else None
+
+
+def parse_call_response(value: cbor.Value) -> CallResponse:
+    """Parse a decoded frame as a RESULT or ERROR response to a CALL."""
+    if not isinstance(value, dict):
+        raise ParseFrameError("a call response must be a CBOR map")
+    frame_type = value.get("frame_type")
+    if frame_type == "result":
+        if "payload" not in value:
+            raise ParseFrameError("field 'payload' is required")
+        return CallResult(value["payload"], _require_bytes(value, "responded_by", 32))
+    if frame_type == "error":
+        code = value.get("code")
+        if not isinstance(code, int) or isinstance(code, bool) or not (0 <= code <= 255):
+            raise ParseFrameError("field 'code' must be an integer in 0..255")
+        name = value.get("name")
+        if not isinstance(name, str):
+            raise ParseFrameError("field 'name' must be a text string")
+        reported_by = _require_bytes(value, "reported_by", 32)
+        detail_bytes = value.get("detail")
+        if detail_bytes is not None and not isinstance(detail_bytes, bytes):
+            raise ParseFrameError("field 'detail' must be a byte string or null")
+        detail = detail_bytes.decode("utf-8") if detail_bytes is not None else None
+        return CallError(code, name, reported_by, detail)
+    raise ParseFrameError(f"frame_type {frame_type!r} is not a call response")
+
+
+#: ---------------------------------------------------------------------
+#: ADVERTISE / UNADVERTISE -- registers this connection as the handler
+#: for (realm, procedure). Fire-and-forget on the wire; the station then
+#: routes inbound CALLs for that procedure back to this connection.
+#: ---------------------------------------------------------------------
+
+
+def build_advertise(realm: bytes, procedure: str, advertiser: bytes) -> dict:
+    frame = base("advertise", 0)
+    frame.update(
+        {
+            "realm": realm,
+            "procedure": procedure.encode("utf-8"),
+            "advertiser": advertiser,
+            "options": {},
+        }
+    )
+    return frame
+
+
+def build_unadvertise(realm: bytes, procedure: str, advertiser: bytes) -> dict:
+    frame = base("unadvertise", 0)
+    frame.update(
+        {
+            "realm": realm,
+            "procedure": procedure.encode("utf-8"),
+            "advertiser": advertiser,
+        }
+    )
+    return frame
