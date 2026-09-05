@@ -7,8 +7,8 @@ genuine cross-language wire AND cryptographic compatibility for the
 envelope layer, not just internal self-consistency. Reproduce with:
 
     python -c "
-    from macula import frame
-    from macula.identity import KeyPair
+    from macula_py import frame
+    from macula_py.identity import KeyPair
     identity = KeyPair.generate(puzzle=False)
     signed = frame.sign(frame.build_connect(identity.node_id(), identity.puzzle_evidence()), identity)
     open('/tmp/connect.bin', 'wb').write(frame.encode_frame(signed))
@@ -30,8 +30,8 @@ then, against a macula checkout with beam files built (ASDF_ERLANG_VERSION=28.4.
 
 import pytest
 
-from macula import cbor, frame
-from macula.identity import KeyPair
+from macula_py import cbor, frame
+from macula_py.identity import KeyPair
 
 
 def test_fresh_frame_id_is_16_bytes_and_looks_like_a_uuidv7():

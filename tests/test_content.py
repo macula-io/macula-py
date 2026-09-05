@@ -6,7 +6,7 @@ instead of a real QUIC connection.
 
 import pytest
 
-from macula import bolt4, content, frame, manifest
+from macula_py import bolt4, content, frame, manifest
 
 
 class _FakeStream:

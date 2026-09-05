@@ -3,7 +3,7 @@
 Ports the complete 17-entry table from ``macula_bolt4.erl`` (macula-io/macula,
 src/peering/) -- adapted from Lightning Network's BOLT#4 onion-failure
 codes. Every CALL ERROR frame carries one of these codes; `name` is
-derived from `code` on the wire (see :mod:`macula.frame`'s ERROR builder),
+derived from `code` on the wire (see :mod:`macula_py.frame`'s ERROR builder),
 never sent independently.
 """
 

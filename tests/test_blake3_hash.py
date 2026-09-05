@@ -13,7 +13,7 @@ directly against the actual macula checkout:
         io:format("~s~n", [binary:encode_hex(macula_blake3_nif:hash(binary:copy(<<0>>, 1000)))]).
 """
 
-from macula import blake3_hash
+from macula_py import blake3_hash
 
 GOLDEN_VECTORS = {
     b"macula": "cff544e74792764abe735af6a4f6422f138d659145de6f9a181d30929df40ab1",

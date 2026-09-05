@@ -6,7 +6,7 @@ custom transport -- `aioquic.asyncio.client.connect()` already gives a
 `QuicConnectionProtocol` with `create_stream()` returning a plain
 `(asyncio.StreamReader, asyncio.StreamWriter)` pair, which is all this
 module needs: length-prefixed frame bytes over one bidirectional stream,
-matching the wire format `macula.frame` implements.
+matching the wire format `macula_py.frame` implements.
 
 ALPN is `"macula"` (confirmed via macula-dotnet's own live-verified
 `SslClientAuthenticationOptions`, itself checked against the real demo

@@ -8,7 +8,7 @@ just with themselves.
 
 import pytest
 
-from macula import frame
+from macula_py import frame
 
 _NODE_ID = bytes.fromhex("E07428AAF95D59E24EF819B5570EF1DA1E8CB0B219A17FD3B7A3555FC2960CC2")
 _STREAM_ID = bytes([1]) * 16
@@ -103,7 +103,7 @@ def test_build_stream_end_rejects_an_invalid_role():
 
 
 def test_round_trip_through_this_modules_own_sign_and_verify():
-    from macula.identity import KeyPair
+    from macula_py.identity import KeyPair
 
     identity = KeyPair.generate(puzzle=False)
     built = frame.sign(frame.build_stream_reply(_STREAM_ID, "done", identity.node_id()), identity)

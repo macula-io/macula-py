@@ -1,7 +1,7 @@
 import pytest
 
-from macula import frame
-from macula.identity import KeyPair
+from macula_py import frame
+from macula_py.identity import KeyPair
 
 
 def test_build_publish_encodes_topic_as_bytes_not_text():

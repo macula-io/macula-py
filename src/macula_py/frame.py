@@ -9,7 +9,7 @@ the boolean-as-text-string convention) was verified against the Erlang
 source directly, not inferred from Go alone.
 
 A wire frame is ``<Length:4 bytes big-endian><CBOR>``, where CBOR is the
-deterministic encoding (:mod:`macula.cbor`) of a single map. Every frame
+deterministic encoding (:mod:`macula_py.cbor`) of a single map. Every frame
 carries a common envelope -- version, frame_type, frame_id (UUIDv7),
 sent_at_ms, capabilities, plus realm/call_id/source_route set to null
 unless the specific frame type populates them -- and every frame is

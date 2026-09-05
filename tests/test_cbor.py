@@ -3,7 +3,7 @@ import struct
 
 import pytest
 
-from macula import cbor
+from macula_py import cbor
 
 
 # Byte-exact vectors matching macula_record_cbor.erl's own encoding rules

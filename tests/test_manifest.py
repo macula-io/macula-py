@@ -1,6 +1,6 @@
 import pytest
 
-from macula import manifest
+from macula_py import manifest
 
 
 def test_block_mcid_is_34_bytes_version_codec_raw_hash():

@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "macula"
+name = "macula-py"
 version = "0.1.0"
 description = "Native Python client for the Macula mesh wire protocol -- QUIC transport, deterministic CBOR, Ed25519 identity, BLAKE3 content-addressing, unary RPC, PubSub, content transfer, and streaming RPC (both caller and provider roles)."
 readme = "README.md"

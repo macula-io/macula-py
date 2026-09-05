@@ -1,4 +1,4 @@
-"""Offline tests for streaming RPC (macula.connection.StreamHandle,
+"""Offline tests for streaming RPC (macula_py.connection.StreamHandle,
 Session.open_stream, Session.accept_stream) -- a real asyncio.StreamReader
 fed pre-encoded frames, and a minimal fake writer capturing what gets
 written, so these exercise the actual sign/encode/parse code paths
@@ -9,9 +9,9 @@ import asyncio
 
 import pytest
 
-from macula import frame
-from macula.connection import Session, StreamHandle
-from macula.identity import KeyPair
+from macula_py import frame
+from macula_py.connection import Session, StreamHandle
+from macula_py.identity import KeyPair
 
 
 class FakeWriter:

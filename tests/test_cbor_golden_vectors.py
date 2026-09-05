@@ -41,7 +41,7 @@ equivalent is a plain `str` key, not `bytes`.
 
 import hashlib
 
-from macula import cbor
+from macula_py import cbor
 
 GOLDEN_VECTORS: dict[str, tuple[cbor.Value, str]] = {
     "uint_0": (0, "00"),

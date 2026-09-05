@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from macula.identity import DEFAULT_PUZZLE_DIFFICULTY, KeyPair, LoadKeyError
+from macula_py.identity import DEFAULT_PUZZLE_DIFFICULTY, KeyPair, LoadKeyError
 
 
 def test_generate_produces_a_valid_default_difficulty_identity():

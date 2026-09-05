@@ -1,6 +1,6 @@
 import pytest
 
-from macula import bolt4
+from macula_py import bolt4
 
 
 def test_table_has_all_17_entries_matching_the_erlang_reference():

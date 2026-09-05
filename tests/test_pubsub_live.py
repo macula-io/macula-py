@@ -20,9 +20,9 @@ import uuid
 
 import pytest
 
-from macula import frame
-from macula.connection import Session
-from macula.identity import KeyPair
+from macula_py import frame
+from macula_py.connection import Session
+from macula_py.identity import KeyPair
 
 STATION_HOST = "station-de-frankfurt.macula.io"
 STATION_PORT = 4433

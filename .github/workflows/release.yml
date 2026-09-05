@@ -1,0 +1,54 @@
+name: Release to PyPI
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    name: publish to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate version matches pyproject.toml
+        run: |
+          PACKAGE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          if [ "$PACKAGE_VERSION" != "${{ steps.version.outputs.VERSION }}" ]; then
+            echo "::error::Tag version (${{ steps.version.outputs.VERSION }}) doesn't match pyproject.toml version ($PACKAGE_VERSION)"
+            exit 1
+          fi
+
+      # Rebuilds and re-runs the offline suite here rather than trusting
+      # an artifact from ci.yml's own run -- this workflow triggers off a
+      # tag push, a separate event from the branch push ci.yml already
+      # validated, so there's no prior run's output to reuse.
+      - run: pip install -e ".[dev]"
+      - run: pytest -m "not live"
+
+      - name: Build sdist and wheel
+        run: |
+          pip install build
+          python -m build
+
+      # OIDC Trusted Publishing -- no token/secret of any kind. PyPI
+      # exchanges this job's own ambient GitHub Actions OIDC token for a
+      # short-lived upload credential, but ONLY because the pending
+      # publisher already registered for this exact (owner, repo,
+      # workflow filename) triple -- see the module doc in this repo's
+      # own PyPI project settings. release/v1 (not a pinned vX.Y.Z) is
+      # PyPA's own recommended way to consume this action: that branch is
+      # force-updated with signed commits specifically for this trust
+      # model, unlike the SHA-pinning convention used elsewhere.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -5,8 +5,8 @@ marker (see pyproject.toml); run explicitly with `pytest -m live`.
 
 import pytest
 
-from macula.connection import ConnectRefusedError, Session
-from macula.identity import KeyPair
+from macula_py.connection import ConnectRefusedError, Session
+from macula_py.identity import KeyPair
 
 STATION_HOST = "station-de-frankfurt.macula.io"
 STATION_PORT = 4433

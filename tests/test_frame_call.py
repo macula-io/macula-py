@@ -1,7 +1,7 @@
 import pytest
 
-from macula import bolt4, frame
-from macula.identity import KeyPair
+from macula_py import bolt4, frame
+from macula_py.identity import KeyPair
 
 
 def _call_id() -> bytes:

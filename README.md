@@ -38,9 +38,9 @@ Also lives as a runnable example -- `python examples/quickstart.py`:
 import asyncio
 import uuid
 
-from macula import frame
-from macula.connection import Session
-from macula.identity import KeyPair
+from macula_py import frame
+from macula_py.connection import Session
+from macula_py.identity import KeyPair
 
 STATION_HOST = "station-de-frankfurt.macula.io"
 STATION_PORT = 4433
@@ -83,12 +83,12 @@ separate `KeyPair`s for each role.
 
 Built and verified in the order every sibling SDK was built in:
 
-- **Identity** (`macula.identity`) -- Ed25519 keypairs, S/Kademlia
+- **Identity** (`macula_py.identity`) -- Ed25519 keypairs, S/Kademlia
   puzzle-hardened generation (matches `macula_identity.erl`'s own
   default: puzzle-hardened by default, no unhardened shortcut exposed),
   sign/verify, atomic key-file persistence in the exact wire format
   `macula_identity:save/2` uses.
-- **Deterministic CBOR** (`macula.cbor`) -- a hand-rolled codec matching
+- **Deterministic CBOR** (`macula_py.cbor`) -- a hand-rolled codec matching
   `macula_record_cbor.erl` exactly, NOT a generic CBOR library (this
   wire's rules diverge from RFC 8949's own canonical form: floats are
   always full binary64 never the shorter widths, map keys sort by their
@@ -96,26 +96,26 @@ Built and verified in the order every sibling SDK was built in:
   at all -- every SDK's convention is 1/0). Verified byte-for-byte
   against the real Erlang encoder itself (see
   `tests/test_cbor_golden_vectors.py`), not just self-consistency.
-- **BLAKE3** (`macula.blake3_hash`) -- content-addressing, backed by the
+- **BLAKE3** (`macula_py.blake3_hash`) -- content-addressing, backed by the
   same Rust `blake3` crate `macula_crypto_nif` uses (not Erlang's own
   pure fallback, which its own source documents as NOT cryptographically
   real BLAKE3). Cross-verified against the real NIF's output.
-- **The frame envelope** (`macula.frame`) -- Ed25519-signed frame
+- **The frame envelope** (`macula_py.frame`) -- Ed25519-signed frame
   construction/verification and the length-prefixed wire codec, matching
   `macula_frame.erl` exactly, including its frame-level
-  boolean-as-text-string convention (distinct from `macula.cbor`'s own
+  boolean-as-text-string convention (distinct from `macula_py.cbor`'s own
   payload-level 1/0 convention -- these are two different rules for two
   different layers, confirmed by reading the Erlang source directly). A
   signed CONNECT frame built entirely by this module was independently
   decoded and signature-verified by the real, unmodified Erlang
   `macula_frame` module -- genuine cross-language wire and cryptographic
   compatibility, not just self-consistency.
-- **QUIC transport + CONNECT/HELLO handshake** (`macula.connection`) --
+- **QUIC transport + CONNECT/HELLO handshake** (`macula_py.connection`) --
   built on `aioquic`. **Live-verified against the real production
   station fleet** (`station-de-frankfurt.macula.io`): a real handshake
   completes, the HELLO's signature verifies, `accepted` is `true`.
 - **Unary RPC, both roles** (`Session.call`/`Session.advertise`/
-  `Session.serve_one_call`) -- BOLT#4 error taxonomy (`macula.bolt4`).
+  `Session.serve_one_call`) -- BOLT#4 error taxonomy (`macula_py.bolt4`).
   **Live-verified to the standard this org's own SDK work holds real
   proof to**: not just "reached the call stage with a clean
   `unknown_next_peer`" (which only proves the caller's own path works),
@@ -132,7 +132,7 @@ Built and verified in the order every sibling SDK was built in:
   ADVERTISE-needs-a-moment finding, documented in
   `tests/test_pubsub_live.py`.
 
-- **Content transfer** (`macula.manifest`, `macula.content`) -- fixed-size
+- **Content transfer** (`macula_py.manifest`, `macula_py.content`) -- fixed-size
   chunking, Merkle-root computation, and MCID derivation matching
   `macula_manifest.erl` exactly (cross-verified byte-for-byte against the
   real Erlang implementation for a 3-chunk input, including the
@@ -150,7 +150,7 @@ Built and verified in the order every sibling SDK was built in:
   against the production fleet before calling this piece done.
 
 - **Streaming RPC, both caller and provider roles** (`Session.open_stream`/
-  `Session.accept_stream`, `macula.connection.StreamHandle`) --
+  `Session.accept_stream`, `macula_py.connection.StreamHandle`) --
   STREAM_OPEN/DATA/END/ERROR/REPLY over their own dedicated QUIC stream
   (like content transfer, not the control stream), matching
   `macula_frame.erl`'s constructors and `macula_station_link.erl`'s own
