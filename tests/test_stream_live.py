@@ -58,24 +58,16 @@ async def test_server_stream_round_trip_delivers_chunks_and_a_terminal_reply():
 
 
 @pytest.mark.live
-@pytest.mark.xfail(
-    reason=(
-        "macula-station's stream route lifecycle (macula_station_peer_observer.erl, "
-        "maybe_close_stream_route/3) drops the WHOLE bidirectional route on the first "
-        "terminal frame it sees for a stream_id, not per-direction -- its own comment "
-        "documents this as deliberate for now ('For server_stream, the only mode our "
-        "suite exercises today ... Close on the first terminal frame for now'). A "
-        "client_stream caller's STREAM_END(role=send) half-close is exactly this case: "
-        "the station drops the route (and closes both dedicated QUIC streams) before "
-        "the provider's STREAM_REPLY can be relayed back, even though the provider's own "
-        "write succeeds locally. This SDK's wire encoding is correct here (verified: the "
-        "provider receives all 3 chunks and the STREAM_END correctly, and set_reply() "
-        "raises no error) -- the gap is server-side relay lifecycle, not this client. "
-        "Reported upstream; un-xfail once macula-station tracks per-direction closure."
-    ),
-    strict=True,
-)
 async def test_client_stream_round_trip_caller_sends_chunks_provider_replies_with_their_sum():
+    """Was xfail until 2026-09-05: macula-station's stream route lifecycle
+    (macula_station_peer_observer.erl) used to drop the WHOLE bidirectional
+    route on the first terminal frame it saw for a stream_id, not
+    per-direction -- a client_stream caller's own STREAM_END(role=send)
+    half-close hit exactly that, tearing the route down before the
+    provider's STREAM_REPLY could be relayed back. Fixed server-side
+    (mode-aware half-close semantics, commit 07db0d8) and confirmed live
+    against the real fleet -- this test now genuinely passes.
+    """
     provider_id = KeyPair.generate()
     caller_id = KeyPair.generate()
     provider = await Session.connect(STATION_HOST, STATION_PORT, provider_id)
