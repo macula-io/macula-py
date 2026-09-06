@@ -32,9 +32,22 @@ uses to join it.
 
 ## Quick start
 
-Also lives as a runnable example -- `python examples/quickstart.py`:
+Also lives as a runnable example -- `python examples/quickstart.py`.
+Advertises and calls its own trivial echo procedure (two identities, a
+provider and a caller, since a station kicks a connection the instant a
+second one arrives under the same identity) rather than depending on any
+particular procedure already being advertised on the fleet:
 
 ```python
+"""Connects to the real production demo fleet, advertises a trivial
+echo procedure, and calls it. Run with: python examples/quickstart.py
+
+Two identities are used (a provider and a caller) because a station
+kicks a connection the instant a second one arrives under the same
+identity -- the same reason every one of this SDK's own live tests
+uses separate KeyPairs for each role.
+"""
+
 import asyncio
 import uuid
 
@@ -45,6 +58,9 @@ from macula_py.identity import KeyPair
 STATION_HOST = "station-de-frankfurt.macula.io"
 STATION_PORT = 4433
 REALM = bytes(32)
+# Unique per run -- reusing a fixed procedure name across rapid repeated
+# runs of this script can hit stale DHT routing state from the prior
+# run's now-dead advertiser.
 PROCEDURE = f"macula_py.quickstart_echo.{uuid.uuid4().hex}"
 
 
@@ -71,7 +87,8 @@ async def main() -> None:
         print(response)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 Two identities are used (a provider and a caller) because a station
