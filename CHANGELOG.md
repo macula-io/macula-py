@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.3.0 (2026-09-26)
+
+On macula-go v0.17.0's C ABI (was v0.13.0).
+
+### Added
+
+- UCANs (macula 12, D7): `NodeKey.ucan` mints a token for the node that will
+  present it; `Pool.call` and `Pool.open_stream` take `ucan=` and `proofs=`;
+  `Pool.serve` and `Pool.serve_stream` take `policy=` (`UcanRequired`,
+  `RealmMemberRequired`), and the provider refuses what the policy does not
+  accept with `unauthorized` (or `malformed_frame` for a proof no token
+  names). `macula_py.ucan.proof_id` and `key_id`, held to macula's UCAN
+  vectors.
+- `NodeKey.device_request_proof` (realm proof v2, macula-realm#29) and
+  `macula_py.device_request.device_request_message`, held to the realm's
+  vector; a proof made here is accepted by the realm's own verifier
+  (`scripts/interop/device_request.sh`).
+- `NodeKey.ownership_proof` (v2, mcl-om#7) and
+  `macula_py.ownership_proof.ownership_proof_message`, held to mcl_om's
+  vector; a payload signed here, delivered through a station, is accepted by
+  mcl_om's own verifier and refused changed or replayed
+  (`scripts/interop/ownership_proof.sh`).
+- `NoProviderError`, for the `no_provider` kind: no provider the realm trusts
+  advertises the procedure.
+
+### Changed
+
+- Stopping a served procedure answers each call it still holds with the
+  provider error `handler_error` and the detail "the procedure was
+  withdrawn", from the library, before the handler's own cancellation.
+- A handler's request payload never holds a "caller" its sender wrote: who
+  called is `request.caller`, the verified signer.
+- A device request or ownership-proven payload carrying a "caller" is
+  refused (`InvalidArgumentError`).
+- `open_stream`'s `deadline_ms` bounds the provider's admission of the open,
+  not the stream's life, as the contract says.
+
 ## 0.2.0 (2026-09-26)
 
 A rebuild onto the macula 12 wire. 0.1.0 spoke the retired classical wire,

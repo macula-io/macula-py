@@ -40,6 +40,8 @@ class TestStations:
             raise RuntimeError("teststation printed nothing")
         info = json.loads(first)
         self.stations = [StationInfo(s["host"], s["port"], s["node_id"]) for s in info["stations"]]
+        self.profile = profile
+        self.realm_name: str = info["realm_name"]
         self.realm_id: str = info["realm_id"]
         self.realm_key: str = info["realm_key"]
         self.org: str = info["org"]

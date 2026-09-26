@@ -1,8 +1,11 @@
 """A live run against one macula 12 station: the pool connects pinned, reads
-the DHT, calls mcl-echo/echo by direct dial, and hears its own publication.
+the DHT, calls mcl-echo/echo by direct dial, hears its own publication, and
+serves a UCAN-gated procedure that the station routes to it.
 
-Runs only with MACULA_PY_LIVE set (scripts/live_check.sh); it puts nothing in
-the DHT and publishes once. The key is generated for the run and never saved.
+Runs only with MACULA_PY_LIVE set (scripts/live_check.sh). It publishes once,
+and the gated check advertises one procedure in its own namespace under a
+throwaway realm, withdrawn when it ends. Keys are generated for the run and
+never saved.
 Once MACULA_PY_LIVE is set, every other variable is required: a missing one
 fails naming itself, it never skips.
 """
@@ -10,12 +13,14 @@ fails naming itself, it never skips.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
+import time
 import uuid
 
 import pytest
 
-from macula_py import NodeKey, Pool, RecordType, Seed
+from macula_py import NodeKey, Pool, ProviderError, RecordType, Seed, UcanRequired
 
 pytestmark = pytest.mark.skipif(not os.environ.get("MACULA_PY_LIVE"), reason="MACULA_PY_LIVE not set")
 
@@ -76,3 +81,34 @@ async def test_hears_its_own_publication(pool, live):
         await pool.publish(live["realm"], topic, "heard")
         event = await asyncio.wait_for(anext(aiter(subscription)), timeout=10)
     assert event.payload == "heard"
+
+
+async def test_a_gated_procedure_is_served_to_its_grant_alone(live):
+    # A named throwaway realm (its id the name's SHA-256), a procedure in the
+    # provider's own namespace gated on a root key made for the run.
+    realm_name = f"macula-py-live-{uuid.uuid4().hex[:12]}"
+    realm = hashlib.sha256(realm_name.encode()).digest()
+    seeds = [Seed(live["host"], live["port"], live["node_id"])]
+    provider_key, caller_key, root = [await NodeKey.generate("pq_hybrid") for _ in range(3)]
+    async with await Pool.connect(provider_key, seeds, timeout_ms=60_000) as provider, await Pool.connect(
+        caller_key, seeds, timeout_ms=60_000
+    ) as caller:
+        procedure = provider.own_procedure("gated")
+        async with await provider.serve(
+            realm, procedure, lambda request: "served", policy=UcanRequired(root.node_id())
+        ):
+            grant = root.ucan(
+                caller.node_id(), [{"with": f"mri:realm:{realm_name}", "can": "invoke"}], exp=int(time.time()) + 300
+            )
+            deadline = time.monotonic() + 30
+            while True:
+                try:
+                    assert await caller.call(realm, procedure, {}, ucan=grant, timeout_ms=15_000) == "served"
+                    break
+                except ProviderError as e:
+                    if e.code != "unknown_next_peer" or time.monotonic() > deadline:
+                        raise
+                    await asyncio.sleep(0.5)
+            with pytest.raises(ProviderError) as refused:
+                await caller.call(realm, procedure, {}, timeout_ms=15_000)
+            assert refused.value.code == "unauthorized"

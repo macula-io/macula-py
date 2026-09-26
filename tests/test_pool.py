@@ -347,7 +347,9 @@ class TestServingEdges:
             await served.stop()
             with pytest.raises(ProviderError) as refused:
                 await call
-            assert (refused.value.code, refused.value.detail) == ("handler_error", "withdrawn")
+            # macula_served_stop answers each call it still holds (CONTRACT.md
+            # "Serving and streams"), before the handler's own cancellation can.
+            assert (refused.value.code, refused.value.detail) == ("handler_error", "the procedure was withdrawn")
             assert time.monotonic() - started < 5
 
     async def test_a_stream_handler_that_raises_ends_the_stream_with_handler_error(self, env):

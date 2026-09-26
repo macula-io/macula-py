@@ -37,6 +37,22 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
         ["const uint8_t*", "size_t", "const uint8_t*", "size_t", "const uint8_t*", "size_t", "const char*", ERR],
     ),
     "macula_key_free": ("void", [H]),
+    # Device request proofs (realm proof v2)
+    "macula_key_device_request_proof": ("char*", [H, REALM, "const char*", "const char*", "int32_t", ERR]),
+    "macula_device_request_message": (
+        "uint8_t*",
+        ["const uint8_t*", "size_t", REALM, "const char*", "int64_t", "const uint8_t*", "const char*", "int32_t",
+         "size_t*", ERR],
+    ),
+    # Ownership proofs (v2)
+    "macula_key_ownership_proof": ("char*", [H, REALM, "const char*", "const char*", ERR]),
+    "macula_ownership_proof_message": (
+        "uint8_t*",
+        ["const uint8_t*", REALM, "const char*", "int64_t", "const uint8_t*", "const char*", "size_t*", ERR],
+    ),
+    # UCANs
+    "macula_ucan_create": ("char*", [H, "const uint8_t*", "const char*", "int64_t", "const char*", ERR]),
+    "macula_ucan_proof_id": ("char*", ["const char*", ERR]),
     # Pool
     "macula_pool_connect": (H, [H, "const char*", "const char*", H, ERR]),
     "macula_pool_close": ("void", [H]),
@@ -45,6 +61,10 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     "macula_pool_events_next": ("char*", [H, "int64_t", H, "int32_t*", ERR]),
     # Calls
     "macula_pool_call": ("char*", [H, REALM, "const char*", "const char*", "const uint8_t*", "int64_t", H, ERR]),
+    "macula_pool_call_with": (
+        "char*",
+        [H, REALM, "const char*", "const char*", "const uint8_t*", "const char*", "const char*", "int64_t", H, ERR],
+    ),
     "macula_pool_providers": ("char*", [H, REALM, "const char*", "int64_t", H, ERR]),
     # Publish / subscribe
     "macula_pool_publish": ("void", [H, REALM, "const char*", "const char*", "int64_t", ERR]),
@@ -55,6 +75,8 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     # Serving
     "macula_pool_serve": (H, [H, REALM, "const char*", ERR]),
     "macula_pool_serve_stream": (H, [H, REALM, "const char*", "int32_t", ERR]),
+    "macula_pool_serve_gated": (H, [H, REALM, "const char*", "const char*", ERR]),
+    "macula_pool_serve_stream_gated": (H, [H, REALM, "const char*", "int32_t", "const char*", ERR]),
     "macula_served_next": ("char*", [H, "int64_t", H, "macula_handle*", "int32_t*", ERR]),
     "macula_pending_reply": ("void", [H, "const char*", ERR]),
     "macula_pending_error": ("void", [H, "const char*", ERR]),
@@ -63,6 +85,11 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     "macula_pool_open_stream": (
         H,
         [H, REALM, "const char*", "int32_t", "const char*", "const uint8_t*", "int64_t", "int64_t", H, ERR],
+    ),
+    "macula_pool_open_stream_with": (
+        H,
+        [H, REALM, "const char*", "int32_t", "const char*", "const uint8_t*", "const char*", "const char*",
+         "int64_t", "int64_t", H, ERR],
     ),
     "macula_stream_request": ("char*", [H, ERR]),
     "macula_stream_send_bytes": ("void", [H, "const uint8_t*", "size_t", ERR]),

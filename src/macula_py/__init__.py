@@ -16,6 +16,7 @@ from macula_py._wire import (
     InvalidHandleError,
     MaculaError,
     MaculaTimeoutError,
+    NoProviderError,
     NotFoundError,
     NotSharedError,
     ProviderError,
@@ -47,6 +48,7 @@ from macula_py.stream import (
     StreamMode,
     StreamReply,
 )
+from macula_py.ucan import Policy, RealmMemberRequired, UcanRequired
 
 __all__ = [
     "DEFAULT_CALL_TIMEOUT_MS",
@@ -62,13 +64,16 @@ __all__ = [
     "LinkStatus",
     "MaculaError",
     "MaculaTimeoutError",
+    "NoProviderError",
     "NodeKey",
     "NotFoundError",
     "NotSharedError",
+    "Policy",
     "Pool",
     "PoolEvent",
     "Profile",
     "Provider",
+    "RealmMemberRequired",
     "ProviderError",
     "RecordType",
     "RefusedError",
@@ -85,4 +90,5 @@ __all__ = [
     "StreamMode",
     "StreamReply",
     "Subscription",
+    "UcanRequired",
 ]

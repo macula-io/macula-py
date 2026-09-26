@@ -52,6 +52,10 @@ class NotFoundError(MaculaError):
     """No DHT record under that key."""
 
 
+class NoProviderError(MaculaError):
+    """No provider the realm trusts advertises the procedure."""
+
+
 class AlreadyAnsweredError(MaculaError):
     """A served call was answered already."""
 
@@ -181,6 +185,7 @@ _KINDS: dict[str, type[MaculaError]] = {
     "invalid_argument": InvalidArgumentError,
     "invalid_handle": InvalidHandleError,
     "not_found": NotFoundError,
+    "no_provider": NoProviderError,
     "not_shared": NotSharedError,
     "answered": AlreadyAnsweredError,
     "closed": ClosedError,

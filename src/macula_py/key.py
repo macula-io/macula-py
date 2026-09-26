@@ -6,13 +6,15 @@ its owner only."""
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 import weakref
-from typing import Literal
+from typing import Any, Literal, Mapping, Sequence
 
 from macula_py._blocking import run_blocking
 from macula_py._native import native
-from macula_py._wire import ClosedError
+from macula_py._wire import ClosedError, Id, decode_payload, encode_payload, id32
+from macula_py.device_request import DeviceRequest, Rule, request_json, rule_code
 
 Profile = Literal["pq_hybrid", "pq_pure"]
 
@@ -108,6 +110,82 @@ class NodeKey:
             profile.encode(),
         )
         return valid == 1
+
+    def ucan(
+        self,
+        audience: Id,
+        capabilities: Sequence[Mapping[str, str]],
+        *,
+        exp: int,
+        nbf: int | None = None,
+        nnc: str | None = None,
+        fct: Mapping[str, Any] | None = None,
+        prf: Sequence[str] = (),
+    ) -> str:
+        """A UCAN (macula 12, D7) from this identity key for the node
+        ``audience`` (its node_id), which alone can present it, granting each
+        capability ``{"with": <MRI>, "can": <action>}`` until ``exp`` (Unix
+        seconds). ``prf`` names the parent it is delegated from, by
+        macula_py.ucan.proof_id: at most one. See macula_py.ucan."""
+        caps = []
+        for cap in capabilities:
+            if set(cap) != {"with", "can"}:
+                raise ValueError('macula-py: a capability is {"with": <MRI>, "can": <action>}')
+            caps.append({"with": cap["with"], "can": cap["can"]})
+        options: dict[str, Any] = {}
+        for name, value in (("nbf", nbf), ("nnc", nnc), ("fct", None if fct is None else dict(fct))):
+            if value is not None:
+                options[name] = value
+        if prf:
+            options["prf"] = list(prf)
+        n = native()
+        return n.take_string(  # type: ignore[return-value]
+            n.invoke(
+                "macula_ucan_create",
+                self._live(),
+                id32(audience, "the audience's node_id"),
+                json.dumps(caps).encode(),
+                exp,
+                json.dumps(options).encode() if options else None,
+            )
+        )
+
+    def device_request_proof(self, realm: Id, procedure: str, request: DeviceRequest, rule: Rule) -> dict:
+        """A realm proof v2 that this key made request for procedure in realm,
+        now, with a fresh nonce: ``{"v": 2, "timestamp", "nonce",
+        "signature"}``, sent beside the request's ``public_key``. rule is
+        "http" (a join session's body, under the realm's JSON rule; a str is
+        the body exactly as sent) or "mesh" (a mesh payload). A request with a
+        "caller" field is refused. See macula_py.device_request."""
+        n = native()
+        text = n.take_string(
+            n.invoke(
+                "macula_key_device_request_proof",
+                self._live(),
+                id32(realm, "realm"),
+                procedure.encode(),
+                request_json(request, rule),
+                rule_code(rule),
+            )
+        )
+        return json.loads(text or "null")
+
+    def ownership_proof(self, realm: Id, procedure: str, payload: Mapping[str, Any]) -> dict:
+        """payload with an ``asserted_by`` block by which this key's node
+        authorises its other fields for procedure in realm, now, with a fresh
+        nonce; an earlier block is replaced. Send the result as the payload.
+        A payload carrying "caller" is refused. See macula_py.ownership_proof."""
+        n = native()
+        text = n.take_string(
+            n.invoke(
+                "macula_key_ownership_proof",
+                self._live(),
+                id32(realm, "realm"),
+                procedure.encode(),
+                encode_payload(dict(payload)).encode(),
+            )
+        )
+        return decode_payload(text or "null")  # type: ignore[return-value]
 
     def free(self) -> None:
         """Frees the native key. The NodeKey is unusable after."""

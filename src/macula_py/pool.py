@@ -43,6 +43,7 @@ from macula_py._wire import (
 )
 from macula_py.key import NodeKey
 from macula_py.stream import Request, Stream, StreamMode, request_from
+from macula_py.ucan import Policy, RealmMemberRequired, UcanRequired
 
 log = logging.getLogger("macula_py")
 
@@ -135,6 +136,19 @@ class RecordType(enum.IntEnum):
 
 Handler = Callable[[Request], Union[Any, Awaitable[Any]]]
 StreamHandler = Callable[[Stream], Awaitable[None]]
+
+
+def _presentation(ucan: str | None, proofs: Sequence[str]) -> tuple[bytes | None, bytes | None]:
+    """A token and its chain's proofs as the ABI takes them."""
+    if isinstance(proofs, str):
+        raise TypeError("macula-py: proofs is a sequence of tokens, not one token")
+    return (None if ucan is None else ucan.encode()), (json.dumps(list(proofs)).encode() if proofs else None)
+
+
+def _policy_json(policy: Policy) -> bytes:
+    if not isinstance(policy, (UcanRequired, RealmMemberRequired)):
+        raise TypeError("macula-py: a policy is a macula_py.ucan.UcanRequired or RealmMemberRequired")
+    return json.dumps(policy.json()).encode()
 
 
 def _flag(value: Any) -> bool | None:
@@ -446,19 +460,28 @@ class Pool:
         *,
         provider: Id | None = None,
         timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS,
+        ucan: str | None = None,
+        proofs: Sequence[str] = (),
     ) -> Any:
         """Calls procedure in realm at a provider (any trusted one unless
-        provider names one) by direct dial. A provider's ERROR is raised as
-        ProviderError, a station's relay error as RelayError."""
+        provider names one) by direct dial, presenting ucan and the proofs of
+        its chain to a gated procedure (macula_py.ucan). A provider's ERROR is
+        raised as ProviderError (``unauthorized`` for a token it refuses), a
+        station's relay error as RelayError."""
         n = native()
         h, realm32, body = self._live(), id32(realm, "realm"), encode_payload(payload).encode()
         provider32 = None if provider is None else id32(provider, "provider")
-        text = await run_blocking(
-            lambda c: n.take_string(
-                n.invoke("macula_pool_call", h, realm32, procedure.encode(), body, provider32, timeout_ms, c)
-            ),
-            n.cancels,
-        )
+        if ucan is None and not proofs:
+            invoke = lambda c: n.invoke(  # noqa: E731
+                "macula_pool_call", h, realm32, procedure.encode(), body, provider32, timeout_ms, c
+            )
+        else:
+            token, proofs_json = _presentation(ucan, proofs)
+            invoke = lambda c: n.invoke(  # noqa: E731
+                "macula_pool_call_with", h, realm32, procedure.encode(), body, provider32, token, proofs_json,
+                timeout_ms, c,
+            )
+        text = await run_blocking(lambda c: n.take_string(invoke(c)), n.cancels)
         return decode_payload(text) if text is not None else None
 
     async def providers(self, realm: Id, procedure: str, *, timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS) -> list[Provider]:
@@ -485,15 +508,23 @@ class Pool:
         handle = await run_native(lambda: native().invoke("macula_pool_subscribe", h, realm32, topic.encode()))
         return Subscription(handle)
 
-    async def serve(self, realm: Id, procedure: str, handler: Handler) -> Served:
+    async def serve(self, realm: Id, procedure: str, handler: Handler, *, policy: Policy | None = None) -> Served:
         """Serves procedure in realm: ``~<own node_id>/<name>`` (own_procedure)
         or ``<org>/<name>`` under an org that delegated it to this node.
         handler(request) returns the result, directly or as an awaitable; an
         exception it raises reaches the caller as a ProviderError of code
-        handler_error with the exception's text as its detail."""
+        handler_error with the exception's text as its detail. With a policy
+        (macula_py.ucan), only calls whose UCAN it accepts reach the handler;
+        the rest are answered unauthorized."""
         n = native()
         h, realm32 = self._live(), id32(realm, "realm")
-        handle = await run_native(lambda: n.invoke("macula_pool_serve", h, realm32, procedure.encode()))
+        if policy is None:
+            handle = await run_native(lambda: n.invoke("macula_pool_serve", h, realm32, procedure.encode()))
+        else:
+            policy_json = _policy_json(policy)
+            handle = await run_native(
+                lambda: n.invoke("macula_pool_serve_gated", h, realm32, procedure.encode(), policy_json)
+            )
 
         async def dispatch(pending: int, item: dict) -> None:
             await _answer_call(n, pending, request_from(item), handler)
@@ -506,15 +537,27 @@ class Pool:
 
         return Served(handle, dispatch, release, procedure)
 
-    async def serve_stream(self, realm: Id, procedure: str, mode: StreamMode, handler: StreamHandler) -> Served:
+    async def serve_stream(
+        self, realm: Id, procedure: str, mode: StreamMode, handler: StreamHandler, *, policy: Policy | None = None
+    ) -> Served:
         """Serves a streaming procedure: handler(stream) runs per session, with
         the session's request as stream.request. The stream is closed when the
-        handler returns, and aborted with handler_error when it raises."""
+        handler returns, and aborted with handler_error when it raises. With a
+        policy (macula_py.ucan), only opens whose UCAN it accepts start a
+        session; the rest are refused with a stream error, unauthorized."""
         n = native()
         h, realm32 = self._live(), id32(realm, "realm")
-        handle = await run_native(
-            lambda: n.invoke("macula_pool_serve_stream", h, realm32, procedure.encode(), int(mode))
-        )
+        if policy is None:
+            handle = await run_native(
+                lambda: n.invoke("macula_pool_serve_stream", h, realm32, procedure.encode(), int(mode))
+            )
+        else:
+            policy_json = _policy_json(policy)
+            handle = await run_native(
+                lambda: n.invoke(
+                    "macula_pool_serve_stream_gated", h, realm32, procedure.encode(), int(mode), policy_json
+                )
+            )
 
         async def dispatch(stream_handle: int, item: dict) -> None:
             await _run_session(Stream(stream_handle, request_from(item)), handler)
@@ -531,17 +574,32 @@ class Pool:
         provider: Id | None = None,
         deadline_ms: int = 0,
         timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS,
+        ucan: str | None = None,
+        proofs: Sequence[str] = (),
     ) -> Stream:
-        """Opens a stream to procedure in realm by direct dial. deadline_ms is
-        the stream's life (30 s when 0); timeout_ms bounds opening it."""
+        """Opens a stream to procedure in realm by direct dial, presenting
+        ucan and its chain's proofs to a gated procedure (macula_py.ucan; a
+        refused open is a StreamError from recv). deadline_ms is how far
+        ahead the open's signed deadline lies (30 s when 0), which bounds the
+        provider's admission, not the stream's life; timeout_ms bounds opening
+        it."""
         n = native()
         h, realm32, body = self._live(), id32(realm, "realm"), encode_payload(payload).encode()
         provider32 = None if provider is None else id32(provider, "provider")
-        handle = await run_blocking(
-            lambda c: n.invoke(
+        if ucan is None and not proofs:
+            invoke = lambda c: n.invoke(  # noqa: E731
                 "macula_pool_open_stream",
                 h, realm32, procedure.encode(), int(mode), body, provider32, deadline_ms, timeout_ms, c,
-            ),
+            )
+        else:
+            token, proofs_json = _presentation(ucan, proofs)
+            invoke = lambda c: n.invoke(  # noqa: E731
+                "macula_pool_open_stream_with",
+                h, realm32, procedure.encode(), int(mode), body, provider32, token, proofs_json, deadline_ms,
+                timeout_ms, c,
+            )
+        handle = await run_blocking(
+            invoke,
             n.cancels,
             discard=lambda stream_handle: n.call("macula_stream_free", stream_handle),
         )
