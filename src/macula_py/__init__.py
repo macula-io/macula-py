@@ -1,3 +1,23 @@
-"""Native Python client for the Macula mesh wire protocol."""
+"""macula-py: a Python node on the macula 12 mesh, over macula-go's C ABI."""
 
-__all__ = ["blake3_hash", "bolt4", "cbor", "connection", "content", "frame", "identity", "manifest"]
+from macula_py._wire import (
+    DEFAULT_CALL_TIMEOUT_MS,
+    DEFAULT_CONTENT_TIMEOUT_MS,
+    ContentUnavailableError,
+    MaculaError,
+    NotSharedError,
+    ProviderError,
+    RelayError,
+    StreamError,
+)
+
+__all__ = [
+    "DEFAULT_CALL_TIMEOUT_MS",
+    "DEFAULT_CONTENT_TIMEOUT_MS",
+    "ContentUnavailableError",
+    "MaculaError",
+    "NotSharedError",
+    "ProviderError",
+    "RelayError",
+    "StreamError",
+]
