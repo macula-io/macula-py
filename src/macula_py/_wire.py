@@ -1,8 +1,8 @@
-"""The shapes every part of the API shares: payloads, ids, bytes output modes,
-and the errors a call, a stream or a fetch ends with.
+"""The shapes every part of the API shares: payloads, ids, and the errors a
+call, a stream or a fetch ends with.
 
-A payload is what macula's wire CBOR carries: str, int, float, None, bytes,
-lists (or tuples) and dicts with str keys. There is no boolean on the wire;
+A payload is what macula's wire CBOR carries: str, int (within int64), float,
+None, bytes, lists (or tuples) and dicts with str keys. There is no boolean on the wire;
 encode true/false as 1/0 yourself. Python's bool is an int, so a bool
 reaching the wire is refused here rather than silently sent as JSON true.
 
@@ -108,10 +108,17 @@ class ContentUnavailableError(MaculaError):
         self.failures = failures
 
 
+_INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
+
+
 def _to_wire(value: object) -> object:
     if isinstance(value, bool):
         raise TypeError("macula-py: no boolean on the macula wire; encode true/false as 1/0")
-    if value is None or isinstance(value, (str, int, float)):
+    if isinstance(value, int):
+        if not _INT64_MIN <= value <= _INT64_MAX:
+            raise ValueError(f"macula-py: {value} is outside int64, the integers macula's wire carries")
+        return value
+    if value is None or isinstance(value, (str, float)):
         return value
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {"$bytes": base64.b64encode(bytes(value)).decode("ascii")}

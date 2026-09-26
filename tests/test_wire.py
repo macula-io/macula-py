@@ -51,6 +51,19 @@ class TestEncodePayload:
         with pytest.raises(TypeError, match="set"):
             encode_payload({1, 2})
 
+    @pytest.mark.parametrize("value", [2**63 - 1, -(2**63)])
+    def test_the_int64_bounds_pass_exactly(self, value):
+        assert json.loads(encode_payload({"n": value})) == {"n": value}
+
+    @pytest.mark.parametrize("value", [2**63, -(2**63) - 1, 2**64 - 1])
+    def test_an_integer_outside_int64_is_refused_naming_the_rule(self, value):
+        with pytest.raises(ValueError, match="int64"):
+            encode_payload([value])
+
+    def test_a_non_finite_float_is_refused(self):
+        with pytest.raises(ValueError):
+            encode_payload(float("nan"))
+
     def test_tuples_are_lists(self):
         assert json.loads(encode_payload((1, 2))) == [1, 2]
 

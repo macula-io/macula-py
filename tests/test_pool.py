@@ -82,12 +82,12 @@ class TestCalls:
 
         async def back(request):
             await asyncio.sleep(0.01)
-            return {"got": request.payload, "big": 2**64 - 1}
+            return {"got": request.payload, "big": 2**63 - 1, "small": -(2**63)}
 
         caller = await node(env, 1)
         async with provider, caller, await provider.serve(env.realm_id, procedure, back):
             result = await caller.call(env.realm_id, procedure, b"\x00\x01\xff")
-            assert result == {"got": b"\x00\x01\xff", "big": 2**64 - 1}
+            assert result == {"got": b"\x00\x01\xff", "big": 2**63 - 1, "small": -(2**63)}
 
     async def test_refuse_an_unpinned_realm_and_find_no_provider_for_what_nobody_serves(self, env):
         async with await node(env, 0) as caller:
