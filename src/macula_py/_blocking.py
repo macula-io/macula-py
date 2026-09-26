@@ -36,7 +36,10 @@ async def run_blocking(call: Callable[[int], T], cancels: Cancels) -> T:
         raise asyncio.CancelledError() from None
     except asyncio.CancelledError:
         cancels.cancel(h)
-        # Wait for the native call to return; a result that raced the cancel
-        # is dropped, since the caller asked to stop waiting for it.
+        # Wait for the native call to return. Its outcome (a result that raced
+        # the cancel, or the native "cancelled" error) is taken and dropped,
+        # since the caller asked to stop waiting for it.
         await asyncio.wait([future])
+        if not future.cancelled():
+            future.exception()
         raise

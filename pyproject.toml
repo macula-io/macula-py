@@ -27,7 +27,7 @@ Homepage = "https://github.com/macula-io/macula-py"
 Repository = "https://github.com/macula-io/macula-py"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0"]
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0", "pytest-timeout>=2.3.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -39,4 +39,5 @@ macula_py = ["py.typed", "_native/*"]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 asyncio_mode = "auto"
+timeout = 120
 asyncio_default_fixture_loop_scope = "function"
