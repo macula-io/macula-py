@@ -303,7 +303,7 @@ class TestServingEdges:
             for s in served:
                 await s.stop()
 
-    async def test_a_handler_slower_than_the_callers_deadline_leaves_nothing_unhandled(self, env):
+    async def test_a_handler_slower_than_the_callers_deadline_leaves_nothing_unhandled(self, env, caplog):
         reported = quiet_loop()
         provider = await node(env, 0, admitted=True)
         procedure = f"{env.org}/too_slow"
@@ -327,6 +327,7 @@ class TestServingEdges:
         gc.collect()
         await asyncio.sleep(0)
         assert reported == []
+        assert f"{procedure} answered after its deadline" in caplog.text
 
     async def test_stopping_a_procedure_answers_the_calls_it_had_taken_at_once(self, env):
         provider = await node(env, 0, admitted=True)
@@ -346,7 +347,7 @@ class TestServingEdges:
             await served.stop()
             with pytest.raises(ProviderError) as refused:
                 await call
-            assert refused.value.code == "handler_error"
+            assert (refused.value.code, refused.value.detail) == ("handler_error", "withdrawn")
             assert time.monotonic() - started < 5
 
     async def test_a_stream_handler_that_raises_ends_the_stream_with_handler_error(self, env):

@@ -9,8 +9,10 @@ other call, including the cancellations meant to end them.
 run_blocking gives the call a cancel token of its own. Cancelling the
 awaiting task cancels the token, which ends the native call early instead of
 waiting out its timeout, and returns at once; the call's thread frees the
-token once the native call has returned. Whatever the call ends with after
-that is taken and dropped, however many times the task was cancelled.
+token once the native call has returned. A result nobody awaits any more (it
+raced the cancellation, or landed in the same loop iteration) is handed to
+discard, so a handle it carries is released rather than leaked; an error is
+taken and dropped, however many times the task was cancelled.
 
 run_native runs a short native call that takes no token.
 """
@@ -71,13 +73,29 @@ async def run_native(call: Callable[[], T]) -> T:
     return await asyncio.shield(_start(call, "macula-py native"))
 
 
-async def run_blocking(call: Callable[[int], T], cancels: Cancels) -> T:
-    """call(cancel_token) on a thread of its own, cancelled with the task."""
-    h = cancels.new()
+def _discard_on_result(future: asyncio.Future, discard: Callable[[T], None]) -> None:
+    def hand_over(f: asyncio.Future) -> None:
+        if f.cancelled() or f.exception() is not None:
+            return
+        threading.Thread(target=discard, args=(f.result(),), name="macula-py discard", daemon=True).start()
+
+    future.add_done_callback(hand_over)
+
+
+async def run_blocking(
+    call: Callable[[int], T], cancels: Cancels, discard: Callable[[T], None] | None = None
+) -> T:
+    """call(cancel_token) on a thread of its own, cancelled with the task.
+    discard(result) releases a result that arrives when nobody awaits it."""
     cancelled = threading.Event()
+    token: list[int] = []
 
     def work() -> T:
+        h = cancels.new()
+        token.append(h)
         try:
+            if cancelled.is_set():
+                cancels.cancel(h)
             return call(h)
         except NativeCancelled as e:
             if cancelled.is_set():
@@ -98,5 +116,8 @@ async def run_blocking(call: Callable[[int], T], cancels: Cancels) -> T:
     except asyncio.CancelledError:
         if not future.done():
             cancelled.set()
-            cancels.cancel(h)
+            if token:
+                cancels.cancel(token[0])
+        if discard is not None:
+            _discard_on_result(future, discard)
         raise

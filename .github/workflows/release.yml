@@ -53,7 +53,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check out macula-go at the pinned tag
         run: |
-          git clone --quiet https://github.com/macula-io/macula-go.git build/macula-go
+          git clone --quiet -c core.autocrlf=false https://github.com/macula-io/macula-go.git build/macula-go
           git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(awk '{print $1}' abi/MACULA_GO_REF)"
       - uses: actions/setup-go@v5
         with:

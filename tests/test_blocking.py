@@ -153,3 +153,67 @@ async def test_blocking_calls_never_wait_for_the_default_executor():
     for task in held:
         task.cancel()
     await asyncio.gather(*held, return_exceptions=True)
+
+
+async def test_a_result_that_lands_with_the_cancellation_is_handed_to_discard():
+    import time
+
+    cancels = FakeCancels()
+    go = threading.Event()
+    discarded = []
+    got_it = threading.Event()
+
+    def returns_a_handle(_h):
+        go.wait(5)
+        return "HANDLE_42"
+
+    def discard(value):
+        discarded.append(value)
+        got_it.set()
+
+    task = asyncio.create_task(run_blocking(returns_a_handle, cancels, discard=discard))
+    await asyncio.sleep(0.05)
+    go.set()
+    time.sleep(0.1)  # block the loop: the result is queued before the task wakes
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await asyncio.to_thread(got_it.wait, 5)
+    assert discarded == ["HANDLE_42"]
+
+
+async def test_a_call_cancelled_before_it_returns_hands_a_late_result_to_discard():
+    cancels = FakeCancels()
+    discarded = []
+    got_it = threading.Event()
+
+    def ignores_the_cancel(h):
+        cancels.events[h].wait(5)
+        return "LATE_HANDLE"
+
+    task = asyncio.create_task(
+        run_blocking(ignores_the_cancel, cancels, discard=lambda v: (discarded.append(v), got_it.set()))
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await asyncio.to_thread(got_it.wait, 5)
+    assert discarded == ["LATE_HANDLE"]
+
+
+async def test_an_error_after_cancellation_is_not_discarded():
+    cancels = FakeCancels()
+    discarded = []
+
+    def fails_after_cancel(h):
+        cancels.events[h].wait(5)
+        raise ValueError("no result")
+
+    task = asyncio.create_task(run_blocking(fails_after_cancel, cancels, discard=discarded.append))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.2)
+    assert discarded == []

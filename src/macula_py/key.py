@@ -33,7 +33,13 @@ class NodeKey:
         """A new key whose node_id solves the admission puzzle; takes a second
         or so, off the event loop, and is cancellable."""
         n = native()
-        return cls(await run_blocking(lambda c: n.invoke("macula_key_generate", profile.encode(), c), n.cancels))
+        return cls(
+            await run_blocking(
+                lambda c: n.invoke("macula_key_generate", profile.encode(), c),
+                n.cancels,
+                discard=lambda h: n.call("macula_key_free", h),
+            )
+        )
 
     @classmethod
     def load(cls, path: str | os.PathLike[str], profile: Profile = "pq_hybrid") -> NodeKey:
@@ -47,7 +53,9 @@ class NodeKey:
         n = native()
         return cls(
             await run_blocking(
-                lambda c: n.invoke("macula_key_load_or_create", _path(path), profile.encode(), c), n.cancels
+                lambda c: n.invoke("macula_key_load_or_create", _path(path), profile.encode(), c),
+                n.cancels,
+                discard=lambda h: n.call("macula_key_free", h),
             )
         )
 

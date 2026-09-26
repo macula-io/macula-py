@@ -152,16 +152,23 @@ def _found(text: str) -> FoundRecords:
     return FoundRecords([_record(r) for r in item.get("records") or []], item.get("dropped", 0))
 
 
-async def _next_item(n: Native, function: str, h: int, timeout_ms: int, *out: Any) -> tuple[Any, bool]:
+async def _next_item(
+    n: Native,
+    function: str,
+    h: int,
+    timeout_ms: int,
+    *out: Any,
+    discard: Callable[[str | None], None] | None = None,
+) -> tuple[Any, bool]:
     """One item from an inbox: (its decoded JSON, False), (None, False) when
     timeout_ms ran out, or (None, True) when the source ended and the inbox is
-    drained."""
+    drained. discard releases an item taken when nobody awaits it any more."""
     closed = ctypes.c_int32(0)
 
     def take(c: int) -> str | None:
         return n.take_string(n.invoke(function, h, timeout_ms, c, *out, ctypes.byref(closed)))
 
-    text = await run_blocking(take, n.cancels)
+    text = await run_blocking(take, n.cancels, discard=discard)
     if text is None:
         return None, closed.value == 1
     return decode_payload(text), False
@@ -231,9 +238,16 @@ class Served:
     """A served procedure, until stop(): each call or stream session is handed
     to its handler on a task of its own."""
 
-    def __init__(self, handle: int, dispatch: Callable[[int, dict], Awaitable[None]], name: str) -> None:
+    def __init__(
+        self,
+        handle: int,
+        dispatch: Callable[[int, dict], Awaitable[None]],
+        release: Callable[[int], None],
+        name: str,
+    ) -> None:
         self._handle: int | None = handle
         self._dispatch = dispatch
+        self._release = release
         self._tasks: set[asyncio.Task[None]] = set()
         self._name = name
         self._failure: Exception | None = None
@@ -246,7 +260,14 @@ class Served:
         try:
             while True:
                 out_item = ctypes.c_size_t(0)
-                item, closed = await _next_item(n, "macula_served_next", h, 0, ctypes.byref(out_item))
+                item, closed = await _next_item(
+                    n,
+                    "macula_served_next",
+                    h,
+                    0,
+                    ctypes.byref(out_item),
+                    discard=lambda text, out=out_item: text is not None and self._release(out.value),
+                )
                 if closed:
                     return
                 if item is None:
@@ -257,6 +278,8 @@ class Served:
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            if self._handle is None:
+                return  # stop() withdrew the procedure under the wait
             # Serving stopped; say so now, and raise it from stop().
             log.error("macula-py: serving %s stopped: %s", self._name, e)
             self._failure = e
@@ -268,12 +291,13 @@ class Served:
         if self._handle is None:
             return
         h, self._handle = self._handle, None
+        # Withdraw first, so no call arrives that nobody would take.
+        await run_native(lambda: native().invoke("macula_served_stop", h))
         self._loop.cancel()
         await asyncio.gather(self._loop, return_exceptions=True)
         for task in list(self._tasks):
-            task.cancel()
+            task.cancel("withdrawn")
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        await run_native(lambda: native().invoke("macula_served_stop", h))
         if self._failure is not None:
             raise self._failure
 
@@ -290,12 +314,14 @@ async def _answer_call(n: Native, pending: int, request: Request, handler: Handl
         if inspect.isawaitable(result):
             result = await result
         answer = ("macula_pending_reply", encode_payload(result).encode())
-    except asyncio.CancelledError:
-        # The procedure is being withdrawn: answer now rather than leave the
-        # caller to wait out its timeout. Answering is a non-blocking hand-off
-        # to the native side, so it is done here, without a thread.
+    except asyncio.CancelledError as e:
+        # Answer now rather than leave the caller to wait out its timeout:
+        # "withdrawn" when Served.stop() ended the handler, "cancelled" for
+        # any other cancellation. Answering is a non-blocking hand-off to
+        # the native side, so it is done here, without a thread.
+        detail = "withdrawn" if e.args == ("withdrawn",) else "cancelled"
         try:
-            n.invoke("macula_pending_error", pending, b"withdrawn")
+            n.invoke("macula_pending_error", pending, detail.encode())
         except (AlreadyAnsweredError, InvalidHandleError):
             pass
         raise
@@ -378,6 +404,7 @@ class Pool:
                 "macula_pool_connect", key_handle, seeds_json.encode(), json.dumps(options).encode(), c
             ),
             n.cancels,
+            discard=lambda h: n.call("macula_pool_close", h),
         )
         return cls(handle)
 
@@ -471,7 +498,13 @@ class Pool:
         async def dispatch(pending: int, item: dict) -> None:
             await _answer_call(n, pending, request_from(item), handler)
 
-        return Served(handle, dispatch, procedure)
+        def release(pending: int) -> None:
+            try:
+                n.invoke("macula_pending_error", pending, b"withdrawn")
+            except (AlreadyAnsweredError, InvalidHandleError):
+                pass
+
+        return Served(handle, dispatch, release, procedure)
 
     async def serve_stream(self, realm: Id, procedure: str, mode: StreamMode, handler: StreamHandler) -> Served:
         """Serves a streaming procedure: handler(stream) runs per session, with
@@ -486,7 +519,7 @@ class Pool:
         async def dispatch(stream_handle: int, item: dict) -> None:
             await _run_session(Stream(stream_handle, request_from(item)), handler)
 
-        return Served(handle, dispatch, procedure)
+        return Served(handle, dispatch, lambda stream_handle: n.call("macula_stream_free", stream_handle), procedure)
 
     async def open_stream(
         self,
@@ -510,6 +543,7 @@ class Pool:
                 h, realm32, procedure.encode(), int(mode), body, provider32, deadline_ms, timeout_ms, c,
             ),
             n.cancels,
+            discard=lambda stream_handle: n.call("macula_stream_free", stream_handle),
         )
         return Stream(handle)
 

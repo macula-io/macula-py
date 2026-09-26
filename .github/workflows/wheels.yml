@@ -89,7 +89,7 @@ jobs:
         if: inputs.library == 'build'
         shell: bash
         run: |
-          git clone --quiet https://github.com/macula-io/macula-go.git build/macula-go
+          git clone --quiet -c core.autocrlf=false https://github.com/macula-io/macula-go.git build/macula-go
           git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(awk '{print $1}' abi/MACULA_GO_REF)"
 
       - uses: actions/setup-go@v5
@@ -184,6 +184,21 @@ jobs:
             want=$([ "${{ runner.arch }}" = ARM64 ] && echo arm64 || echo x86_64)
             [ "$archs" = "$want" ] || { echo "::error::$lib is $archs, the wheel says $want"; exit 1; }
           fi
+
+      # auditwheel only rewrites a library it grafts dependencies onto, and
+      # nothing should be grafted: assert the wheel ships the attested bytes.
+      - name: The wheel carries the released library unmodified
+        if: inputs.library == 'release'
+        shell: bash
+        run: |
+          set -euo pipefail
+          want=$(awk '$2 == "${{ matrix.released }}" {print $1}' build/native/SHA256SUMS)
+          [ -n "$want" ] || { echo "::error::${{ matrix.released }} is not in SHA256SUMS"; exit 1; }
+          py=$(command -v python || echo /opt/python/cp313-cp313/bin/python)
+          got=$("$py" -c "import hashlib, sys, zipfile; print(hashlib.sha256(zipfile.ZipFile(sys.argv[1]).read('macula_py/_native/${{ matrix.packaged }}')).hexdigest())" dist/*.whl)
+          echo "SHA256SUMS: $want"
+          echo "in wheel:   $got"
+          [ "$got" = "$want" ] || { echo "::error::the wheel's library is not the released ${{ matrix.released }}"; exit 1; }
 
       - name: Smoke-test the wheel in a fresh virtualenv, on Python 3.11
         shell: bash

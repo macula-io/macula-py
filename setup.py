@@ -7,7 +7,7 @@ from pathlib import Path
 
 from setuptools import setup
 from setuptools.dist import Distribution
-from wheel.bdist_wheel import bdist_wheel
+from setuptools.command.bdist_wheel import bdist_wheel
 
 
 class PlatformWheel(bdist_wheel):

@@ -152,7 +152,9 @@ class Stream:
         return frame
 
     def free(self) -> None:
-        """Frees the stream, aborting it first when it has not ended."""
+        """Frees the stream, aborting it first when it has not ended. The
+        abort is a frame written to the peer, which can wait on a stalled
+        one: from a coroutine, prefer async with, which frees on a thread."""
         if self._handle is not None:
             h, self._handle = self._handle, None
             native().call("macula_stream_free", h)

@@ -13,8 +13,8 @@ read -r ref sha < "$root/abi/MACULA_GO_REF"
 src="${MACULA_GO_DIR:-$root/build/macula-go}"
 
 if [ ! -d "$src/.git" ]; then
-  git clone --quiet git@github.com:macula-io/macula-go.git "$src" 2>/dev/null \
-    || git clone --quiet https://github.com/macula-io/macula-go.git "$src"
+  git clone --quiet -c core.autocrlf=false git@github.com:macula-io/macula-go.git "$src" 2>/dev/null \
+    || git clone --quiet -c core.autocrlf=false https://github.com/macula-io/macula-go.git "$src"
 fi
 git -C "$src" fetch --quiet --tags origin
 git -C "$src" -c advice.detachedHead=false checkout --quiet "$ref"
