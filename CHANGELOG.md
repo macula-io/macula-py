@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-09-26)
 
 A rebuild onto the macula 12 wire. 0.1.0 spoke the retired classical wire,
 which the fleet refuses.
