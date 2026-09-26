@@ -3,8 +3,10 @@ name: Release to PyPI
 # A v* tag publishes that version's five platform wheels to PyPI, through
 # Trusted Publishing (OIDC; no token is stored anywhere). Nothing publishes
 # unless the tag names pyproject's version, abi/MACULA_GO_REF is a macula-go
-# release tag, every released library passes its checksum and attestation,
-# the suite is green against that tag, and all five wheels built.
+# release tag still naming the commit recorded beside it, every released
+# library passes its checksum and attestation, the suite is green against
+# both that tag's source and its released linux-x64 library, and all five
+# wheels built.
 
 on:
   push:
@@ -26,7 +28,7 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not name pyproject's version $version"
             exit 1
           fi
-          ref=$(tr -d '[:space:]' < abi/MACULA_GO_REF)
+          ref=$(awk '{print $1}' abi/MACULA_GO_REF)
           case "$ref" in
             v*) ;;
             *) echo "::error::abi/MACULA_GO_REF is $ref, not a macula-go release tag"; exit 1 ;;
@@ -42,8 +44,37 @@ jobs:
     with:
       library: release
 
+  # The suite again, against the attested linux-x64 library the wheels ship
+  # rather than one built from source.
+  released-library:
+    needs: wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out macula-go at the pinned tag
+        run: |
+          git clone --quiet https://github.com/macula-io/macula-go.git build/macula-go
+          git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(awk '{print $1}' abi/MACULA_GO_REF)"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: build/macula-go/go.mod
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-libraries
+          path: build/native
+      - name: Build the teststation
+        shell: bash
+        run: MACULA_GO_DIR="$PWD/build/macula-go" scripts/build_native.sh | sed 's/^export //' >> "$GITHUB_ENV"
+      - run: pip install -e ".[dev]"
+      - name: The suite, on the released library
+        run: MACULA_LIBRARY_PATH="$PWD/build/native/libmacula-linux-x64.so" python -m pytest -v
+
   publish:
-    needs: [test, wheels]
+    needs: [test, wheels, released-library]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

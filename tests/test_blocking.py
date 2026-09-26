@@ -7,7 +7,7 @@ import threading
 
 import pytest
 
-from macula_py._blocking import run_blocking
+from macula_py._blocking import run_blocking, run_native
 
 
 class FakeCancels:
@@ -50,7 +50,7 @@ async def test_an_error_propagates_and_the_handle_is_freed():
     assert cancels.freed == [1]
 
 
-async def test_cancelling_the_task_cancels_the_native_call_then_frees():
+async def test_cancelling_the_task_cancels_the_native_call_and_frees_after_it_returns():
     cancels = FakeCancels()
     returned = threading.Event()
     freed_before_return: list[bool] = []
@@ -67,21 +67,10 @@ async def test_cancelling_the_task_cancels_the_native_call_then_frees():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert cancels.cancelled == [1]
-    assert returned.is_set()
+    assert await asyncio.to_thread(returned.wait, 5)
+    await asyncio.sleep(0.01)
     assert freed_before_return == [False]
     assert cancels.freed == [1]
-
-
-async def test_a_native_cancelled_error_surfaces_as_cancelled():
-    cancels = FakeCancels()
-
-    def says_cancelled(_h):
-        from macula_py._blocking import NativeCancelled
-
-        raise NativeCancelled()
-
-    with pytest.raises(asyncio.CancelledError):
-        await run_blocking(says_cancelled, cancels)
 
 
 async def test_a_cancelled_calls_own_error_is_retrieved_not_left_to_the_loop():
@@ -107,3 +96,60 @@ async def test_a_cancelled_calls_own_error_is_retrieved_not_left_to_the_loop():
     gc.collect()
     await asyncio.sleep(0)
     assert reported == []
+
+
+async def test_a_second_cancellation_still_leaves_nothing_for_the_loop():
+    from macula_py._blocking import NativeCancelled
+
+    cancels = FakeCancels()
+    reported = []
+    asyncio.get_running_loop().set_exception_handler(lambda _loop, context: reported.append(context))
+    release = threading.Event()
+
+    def ends_late(h):
+        cancels.events[h].wait(5)
+        release.wait(5)
+        raise NativeCancelled("the wait was cancelled")
+
+    task = asyncio.create_task(run_blocking(ends_late, cancels))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    await asyncio.sleep(0.1)
+    del task
+    import gc
+
+    gc.collect()
+    await asyncio.sleep(0)
+    assert reported == []
+    assert cancels.freed == [1]
+
+
+async def test_a_native_cancelled_error_without_our_cancel_is_a_macula_error_not_cancellation():
+    from macula_py import MaculaError
+    from macula_py._blocking import NativeCancelled
+
+    def cancelled_by_someone_else(_h):
+        raise NativeCancelled("context canceled")
+
+    with pytest.raises(MaculaError, match="context canceled"):
+        await run_blocking(cancelled_by_someone_else, FakeCancels())
+
+
+async def test_blocking_calls_never_wait_for_the_default_executor():
+    import concurrent.futures
+
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=1))
+    cancels = FakeCancels()
+    held = [asyncio.create_task(run_blocking(lambda h: cancels.events[h].wait(5), cancels)) for _ in range(4)]
+    await asyncio.sleep(0.05)
+    assert await asyncio.wait_for(run_blocking(lambda h: "through", cancels), 2) == "through"
+    assert await asyncio.wait_for(run_native(lambda: "also through"), 2) == "also through"
+    for task in held:
+        task.cancel()
+    await asyncio.gather(*held, return_exceptions=True)

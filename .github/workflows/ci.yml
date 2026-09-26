@@ -25,7 +25,7 @@ jobs:
       - name: Check out macula-go at the pinned ref
         run: |
           git clone --quiet https://github.com/macula-io/macula-go.git build/macula-go
-          git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(tr -d '[:space:]' < abi/MACULA_GO_REF)"
+          git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(awk '{print $1}' abi/MACULA_GO_REF)"
 
       - uses: actions/setup-go@v5
         with:

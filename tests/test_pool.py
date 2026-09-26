@@ -13,6 +13,7 @@ import pytest
 from macula_py import (
     ContentUnavailableError,
     InvalidArgumentError,
+    MaculaTimeoutError,
     NodeKey,
     NotSharedError,
     Pool,
@@ -20,10 +21,13 @@ from macula_py import (
     RecordType,
     Seed,
     StreamData,
+    StreamError,
     StreamEnd,
     StreamMode,
     StreamReply,
 )
+from macula_py._blocking import run_native
+from macula_py._native import native
 from tests.stations import TestStations
 
 
@@ -230,10 +234,18 @@ class TestPool:
         with pytest.raises(Exception, match="closed"):
             p.node_id()
 
-    async def test_a_malformed_seed_is_refused_as_an_invalid_argument(self, env):
+    async def test_a_malformed_seed_node_id_is_refused_before_anything_is_dialed(self, env):
         key = await NodeKey.generate("pq_pure")
-        with pytest.raises((ValueError, InvalidArgumentError)):
+        with pytest.raises(ValueError, match="a seed's node_id"):
             await Pool.connect(key, [Seed("127.0.0.1", 1, "zz")])
+
+    async def test_the_native_side_refuses_a_malformed_payload_as_an_invalid_argument(self, env):
+        async with await node(env, 0) as p:
+            with pytest.raises(InvalidArgumentError):
+                await run_native(
+                    lambda: native().invoke("macula_pool_publish", p._live(), bytes.fromhex(env.realm_id),
+                                            b"mcl-py/tests/said_v1", b"true", 0)
+                )
 
 
 class TestCancellation:
@@ -262,3 +274,146 @@ class TestCancellation:
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(caller.call(env.realm_id, procedure, {}, timeout_ms=10_000), 0.3)
             assert time.monotonic() - started < 1.5
+
+
+def quiet_loop() -> list:
+    """Records whatever the loop would report as unhandled."""
+    reported: list = []
+    asyncio.get_running_loop().set_exception_handler(lambda _loop, context: reported.append(context))
+    return reported
+
+
+class TestServingEdges:
+    async def test_more_waits_than_the_default_executor_has_threads_do_not_starve_a_call(self, env):
+        import concurrent.futures
+
+        asyncio.get_running_loop().set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=2))
+        provider = await node(env, 0, admitted=True)
+        caller = await node(env, 1)
+        async with provider, caller:
+            served = [
+                await provider.serve(env.realm_id, f"{env.org}/busy_{i}", lambda r, i=i: i) for i in range(4)
+            ]
+            subscription = await caller.subscribe(env.realm_id, "mcl-py/tests/nothing_said_v1")
+            waiting = asyncio.create_task(subscription.next())
+            assert await asyncio.wait_for(caller.call(env.realm_id, f"{env.org}/busy_3", {}), 15) == 3
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+            await subscription.stop()
+            for s in served:
+                await s.stop()
+
+    async def test_a_handler_slower_than_the_callers_deadline_leaves_nothing_unhandled(self, env):
+        reported = quiet_loop()
+        provider = await node(env, 0, admitted=True)
+        procedure = f"{env.org}/too_slow"
+        finished = asyncio.Event()
+
+        async def too_slow(_request):
+            try:
+                await asyncio.sleep(1.0)
+                return "late"
+            finally:
+                finished.set()
+
+        caller = await node(env, 1)
+        async with provider, caller, await provider.serve(env.realm_id, procedure, too_slow):
+            with pytest.raises(MaculaTimeoutError):
+                await caller.call(env.realm_id, procedure, {}, timeout_ms=300)
+            await asyncio.wait_for(finished.wait(), 5)
+            await asyncio.sleep(0.3)
+        import gc
+
+        gc.collect()
+        await asyncio.sleep(0)
+        assert reported == []
+
+    async def test_stopping_a_procedure_answers_the_calls_it_had_taken_at_once(self, env):
+        provider = await node(env, 0, admitted=True)
+        procedure = f"{env.org}/never_answers"
+        taken = asyncio.Event()
+
+        async def never(_request):
+            taken.set()
+            await asyncio.sleep(60)
+
+        caller = await node(env, 1)
+        async with provider, caller:
+            served = await provider.serve(env.realm_id, procedure, never)
+            call = asyncio.create_task(caller.call(env.realm_id, procedure, {}, timeout_ms=20_000))
+            await asyncio.wait_for(taken.wait(), 10)
+            started = time.monotonic()
+            await served.stop()
+            with pytest.raises(ProviderError) as refused:
+                await call
+            assert refused.value.code == "handler_error"
+            assert time.monotonic() - started < 5
+
+    async def test_a_stream_handler_that_raises_ends_the_stream_with_handler_error(self, env):
+        provider = await node(env, 0, admitted=True)
+        procedure = f"{env.org}/breaks"
+
+        async def breaks(stream):
+            await stream.send(b"first")
+            raise RuntimeError("broke mid-stream")
+
+        caller = await node(env, 1)
+        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, breaks):
+            async with await caller.open_stream(env.realm_id, procedure, StreamMode.SERVER) as stream:
+                with pytest.raises(StreamError) as ended:
+                    async for _frame in stream:
+                        pass
+                assert ended.value.code == "handler_error"
+
+    async def test_values_sent_on_a_bidi_stream_arrive_as_values(self, env):
+        provider = await node(env, 0, admitted=True)
+        procedure = f"{env.org}/doubler"
+
+        async def doubler(stream):
+            async for frame in stream:
+                if isinstance(frame, StreamData):
+                    await stream.send_value({"doubled": frame.body["n"] * 2})
+                if isinstance(frame, StreamEnd):
+                    break
+
+        caller = await node(env, 1)
+        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.BIDI, doubler):
+            async with await caller.open_stream(env.realm_id, procedure, StreamMode.BIDI) as stream:
+                await stream.send_value({"n": 21})
+                frame = await stream.recv(timeout_ms=5_000)
+                assert frame == StreamData(body={"doubled": 42}, encoding="msgpack")
+                await stream.close_send()
+
+
+class TestLifecycle:
+    async def test_iterating_a_subscription_ends_when_its_pool_closes(self, env):
+        p = await node(env, 0)
+        subscription = await p.subscribe(env.realm_id, "mcl-py/tests/nothing_said_v1")
+
+        async def drain():
+            return [event async for event in subscription]
+
+        draining = asyncio.create_task(drain())
+        await asyncio.sleep(0.1)
+        await p.close()
+        assert await asyncio.wait_for(draining, 5) == []
+        assert subscription.closed
+        await subscription.stop()
+
+    async def test_a_call_to_a_named_provider_reaches_that_provider(self, env):
+        provider = await node(env, 0, admitted=True)
+        procedure = f"{env.org}/who"
+        caller = await node(env, 1)
+        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: "me"):
+            assert await caller.call(env.realm_id, procedure, {}, provider=provider.node_id()) == "me"
+
+
+class TestPoolEvents:
+    async def test_the_seed_links_coming_up_is_an_event_and_quiet_is_not_closed(self, env):
+        async with await node(env, 0) as p:
+            event = await p.next_event(timeout_ms=5_000)
+            assert event is not None
+            assert (event.kind, event.station, event.up) == ("link", env.stations[0].node_id, True)
+            while await p.next_event(timeout_ms=200) is not None:
+                pass
+            assert p.events_closed is False

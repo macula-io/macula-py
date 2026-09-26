@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from macula_py import ClosedError, NodeKey
+from macula_py import ClosedError, MaculaError, NodeKey
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -98,7 +98,7 @@ async def test_a_key_is_saved_readable_by_its_owner_only_and_loads_back_as_the_s
         assert loaded.node_id() == created.node_id() == again.node_id()
         if os.name == "posix":
             assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
-        with pytest.raises(Exception):
+        with pytest.raises(MaculaError, match="another profile"):
             NodeKey.load(path, "pq_hybrid")
     finally:
         for k in (created, loaded, again):

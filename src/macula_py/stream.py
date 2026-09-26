@@ -9,12 +9,11 @@ yields every frame up to StreamEof.
 
 from __future__ import annotations
 
-import asyncio
 import enum
 from dataclasses import dataclass
 from typing import Any, Union
 
-from macula_py._blocking import run_blocking
+from macula_py._blocking import run_blocking, run_native
 from macula_py._native import native
 from macula_py._wire import ClosedError, MaculaError, StreamError, decode_payload, encode_payload
 
@@ -100,27 +99,33 @@ class Stream:
 
     async def send(self, chunk: bytes) -> None:
         """Sends chunk as raw bytes."""
-        await asyncio.to_thread(native().invoke, "macula_stream_send_bytes", self._live(), chunk, len(chunk))
+        h, data = self._live(), bytes(chunk)
+        await run_native(lambda: native().invoke("macula_stream_send_bytes", h, data, len(data)))
 
     async def send_value(self, value: Any) -> None:
         """Sends a payload value."""
-        await asyncio.to_thread(native().invoke, "macula_stream_send_json", self._live(), encode_payload(value).encode())
+        h, body = self._live(), encode_payload(value).encode()
+        await run_native(lambda: native().invoke("macula_stream_send_json", h, body))
 
     async def close_send(self) -> None:
         """Closes this side's sending; the peer sees StreamEnd."""
-        await asyncio.to_thread(native().invoke, "macula_stream_close_send", self._live())
+        h = self._live()
+        await run_native(lambda: native().invoke("macula_stream_close_send", h))
 
     async def reply(self, payload: Any) -> None:
         """The provider's terminal value."""
-        await asyncio.to_thread(native().invoke, "macula_stream_reply", self._live(), encode_payload(payload).encode())
+        h, body = self._live(), encode_payload(payload).encode()
+        await run_native(lambda: native().invoke("macula_stream_reply", h, body))
 
     async def abort(self, code: str, message: str = "") -> None:
         """Ends the stream with a STREAM_ERROR."""
-        await asyncio.to_thread(native().invoke, "macula_stream_abort", self._live(), code.encode(), message.encode())
+        h = self._live()
+        await run_native(lambda: native().invoke("macula_stream_abort", h, code.encode(), message.encode()))
 
     async def close(self) -> None:
         """Ends the stream normally."""
-        await asyncio.to_thread(native().invoke, "macula_stream_close", self._live())
+        h = self._live()
+        await run_native(lambda: native().invoke("macula_stream_close", h))
 
     async def recv(self, timeout_ms: int = 0) -> StreamFrame | None:
         """The next frame, or None when timeout_ms ran out first (0 waits for
@@ -156,7 +161,7 @@ class Stream:
         return self
 
     async def __aexit__(self, *_exc: object) -> None:
-        await asyncio.to_thread(self.free)
+        await run_native(self.free)
 
     def _live(self) -> int:
         if self._handle is None:

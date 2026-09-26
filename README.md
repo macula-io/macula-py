@@ -99,10 +99,14 @@ Payloads are what macula's wire carries: `str`, `int` within int64, `float`,
 wire: send 1 and 0. A Python `bool` is refused before it leaves, since
 Python treats it as an int.
 
-Every networked method is a coroutine. The native call runs on a worker
-thread with its own cancel token, so cancelling the task (or
-`asyncio.wait_for` timing out) ends the native call at once instead of
-leaving it running.
+Every networked method is a coroutine, and each native call runs on a
+thread of its own, so long waits never starve other calls. The methods that
+take `timeout_ms`, and every wait for an event, a served call or a stream
+frame, carry a cancel token: cancelling the task (or `asyncio.wait_for`
+timing out) ends the native call at once. The rest (`publish`, `subscribe`,
+`serve`, `stop`, `close`, and a stream's sends and ends) are short native
+calls without one; cancelling stops the waiting and the call runs to its
+end.
 
 Errors are typed: `ProviderError`, `RelayError`, `StreamError`,
 `NotSharedError`, `ContentUnavailableError`, `MaculaTimeoutError` (also a

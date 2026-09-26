@@ -6,8 +6,12 @@ realm's key authorizes them (or, in a node's own namespace ``~<node_id>/``,
 only when that node signed them), and the station it serves from dialed
 pinned.
 
-Every method that does network I/O is a coroutine that runs the native call
-on a worker thread; cancelling the awaiting task cancels the native call.
+Every method that does network I/O is a coroutine, and runs its native call
+on a thread of its own. The ones that take timeout_ms, and every wait on an
+inbox, carry a cancel token: cancelling the awaiting task ends the native
+call at once. The others (publish, subscribe, serve, stop, close, and a
+stream's sends and ends) are short native calls without one: cancelling the
+task stops the waiting, and the call runs to its end.
 """
 
 from __future__ import annotations
@@ -21,13 +25,14 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Sequence, Union
 
-from macula_py._blocking import run_blocking
+from macula_py._blocking import run_blocking, run_native
 from macula_py._native import Native, native
 from macula_py._wire import (
     DEFAULT_CALL_TIMEOUT_MS,
     DEFAULT_CONTENT_TIMEOUT_MS,
     AlreadyAnsweredError,
     ClosedError,
+    InvalidHandleError,
     Id,
     Mcid,
     NotFoundError,
@@ -208,7 +213,7 @@ class Subscription:
         """Ends the subscription on every link."""
         if self._handle is not None:
             h, self._handle = self._handle, None
-            await asyncio.to_thread(native().call, "macula_subscription_stop", h)
+            await run_native(lambda: native().call("macula_subscription_stop", h))
 
     async def __aenter__(self) -> Subscription:
         return self
@@ -230,26 +235,36 @@ class Served:
         self._handle: int | None = handle
         self._dispatch = dispatch
         self._tasks: set[asyncio.Task[None]] = set()
+        self._name = name
+        self._failure: Exception | None = None
         self._loop = asyncio.create_task(self._serve(), name=f"macula-py served {name}")
 
     async def _serve(self) -> None:
         n = native()
         h = self._handle
         assert h is not None
-        while True:
-            out_item = ctypes.c_size_t(0)
-            item, closed = await _next_item(n, "macula_served_next", h, 0, ctypes.byref(out_item))
-            if closed:
-                return
-            if item is None:
-                continue
-            task = asyncio.create_task(self._dispatch(out_item.value, item))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+        try:
+            while True:
+                out_item = ctypes.c_size_t(0)
+                item, closed = await _next_item(n, "macula_served_next", h, 0, ctypes.byref(out_item))
+                if closed:
+                    return
+                if item is None:
+                    continue
+                task = asyncio.create_task(self._dispatch(out_item.value, item))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # Serving stopped; say so now, and raise it from stop().
+            log.error("macula-py: serving %s stopped: %s", self._name, e)
+            self._failure = e
 
     async def stop(self) -> None:
-        """Withdraws the procedure on every link, and ends the handlers still
-        running."""
+        """Withdraws the procedure on every link and ends the handlers still
+        running; a call a handler had taken is answered with an error at
+        once. Raises what stopped serving early, if anything did."""
         if self._handle is None:
             return
         h, self._handle = self._handle, None
@@ -258,7 +273,9 @@ class Served:
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        await asyncio.to_thread(native().invoke, "macula_served_stop", h)
+        await run_native(lambda: native().invoke("macula_served_stop", h))
+        if self._failure is not None:
+            raise self._failure
 
     async def __aenter__(self) -> Served:
         return self
@@ -274,12 +291,21 @@ async def _answer_call(n: Native, pending: int, request: Request, handler: Handl
             result = await result
         answer = ("macula_pending_reply", encode_payload(result).encode())
     except asyncio.CancelledError:
+        # The procedure is being withdrawn: answer now rather than leave the
+        # caller to wait out its timeout. Answering is a non-blocking hand-off
+        # to the native side, so it is done here, without a thread.
+        try:
+            n.invoke("macula_pending_error", pending, b"withdrawn")
+        except (AlreadyAnsweredError, InvalidHandleError):
+            pass
         raise
     except Exception as e:  # the handler's failure is the caller's handler_error
         answer = ("macula_pending_error", str(e).encode())
     try:
-        await asyncio.to_thread(n.invoke, answer[0], pending, answer[1])
-    except AlreadyAnsweredError:
+        await run_native(lambda: n.invoke(answer[0], pending, answer[1]))
+    except (AlreadyAnsweredError, InvalidHandleError):
+        # Past the call's deadline the native side has answered it already
+        # and released the pending call.
         log.warning("macula-py: %s answered after its deadline", request.procedure)
 
 
@@ -298,7 +324,7 @@ async def _run_session(stream: Stream, handler: StreamHandler) -> None:
         except ClosedError:
             pass
     finally:
-        await asyncio.to_thread(stream.free)
+        await run_native(stream.free)
 
 
 class Pool:
@@ -307,6 +333,8 @@ class Pool:
 
     def __init__(self, handle: int) -> None:
         self._handle: int | None = handle
+        self.events_closed = False
+        """True once the pool's link events ended and every one was taken."""
 
     @classmethod
     async def connect(
@@ -373,8 +401,11 @@ class Pool:
 
     async def next_event(self, timeout_ms: int = 0) -> PoolEvent | None:
         """The pool's next link event, or None when timeout_ms ran out (0
-        waits for ever) or the pool closed."""
-        item, _closed = await _next_item(native(), "macula_pool_events_next", self._live(), timeout_ms)
+        waits for ever) or the events ended (then events_closed is True). A
+        full inbox (256) drops the oldest."""
+        item, closed = await _next_item(native(), "macula_pool_events_next", self._live(), timeout_ms)
+        if closed:
+            self.events_closed = True
         if item is None:
             return None
         return PoolEvent(item["kind"], item.get("station"), _flag(item.get("direct")), _flag(item.get("up")),
@@ -417,16 +448,14 @@ class Pool:
         """Publishes payload on topic in realm (ttl_ms 0: 10 minutes). Topics
         name a kind of fact; ids go in the payload."""
         body = encode_payload(payload).encode()
-        await asyncio.to_thread(
-            native().invoke, "macula_pool_publish", self._live(), id32(realm, "realm"), topic.encode(), body, ttl_ms
-        )
+        h, realm32 = self._live(), id32(realm, "realm")
+        await run_native(lambda: native().invoke("macula_pool_publish", h, realm32, topic.encode(), body, ttl_ms))
 
     async def subscribe(self, realm: Id, topic: str) -> Subscription:
         """Subscribes to topic in realm: each verified event is heard once,
         however many links deliver it."""
-        handle = await asyncio.to_thread(
-            native().invoke, "macula_pool_subscribe", self._live(), id32(realm, "realm"), topic.encode()
-        )
+        h, realm32 = self._live(), id32(realm, "realm")
+        handle = await run_native(lambda: native().invoke("macula_pool_subscribe", h, realm32, topic.encode()))
         return Subscription(handle)
 
     async def serve(self, realm: Id, procedure: str, handler: Handler) -> Served:
@@ -436,9 +465,8 @@ class Pool:
         exception it raises reaches the caller as a ProviderError of code
         handler_error with the exception's text as its detail."""
         n = native()
-        handle = await asyncio.to_thread(
-            n.invoke, "macula_pool_serve", self._live(), id32(realm, "realm"), procedure.encode()
-        )
+        h, realm32 = self._live(), id32(realm, "realm")
+        handle = await run_native(lambda: n.invoke("macula_pool_serve", h, realm32, procedure.encode()))
 
         async def dispatch(pending: int, item: dict) -> None:
             await _answer_call(n, pending, request_from(item), handler)
@@ -450,8 +478,9 @@ class Pool:
         the session's request as stream.request. The stream is closed when the
         handler returns, and aborted with handler_error when it raises."""
         n = native()
-        handle = await asyncio.to_thread(
-            n.invoke, "macula_pool_serve_stream", self._live(), id32(realm, "realm"), procedure.encode(), int(mode)
+        h, realm32 = self._live(), id32(realm, "realm")
+        handle = await run_native(
+            lambda: n.invoke("macula_pool_serve_stream", h, realm32, procedure.encode(), int(mode))
         )
 
         async def dispatch(stream_handle: int, item: dict) -> None:
@@ -589,7 +618,7 @@ class Pool:
         """Closes every link, subscription, served procedure and stream."""
         if self._handle is not None:
             h, self._handle = self._handle, None
-            await asyncio.to_thread(native().call, "macula_pool_close", h)
+            await run_native(lambda: native().call("macula_pool_close", h))
 
     async def __aenter__(self) -> Pool:
         return self

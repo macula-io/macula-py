@@ -11,8 +11,8 @@ name: Wheels
 # against SHA256SUMS and its build provenance attestation first.
 #
 # Each wheel is then installed into a fresh virtualenv with a Python the
-# build did not use, and must generate and sign with a key from its own
-# packaged library.
+# build did not use, and must generate and sign with a pq_hybrid key (the
+# fleet's profile) from its own packaged library.
 
 on:
   workflow_call:
@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           git clone --quiet https://github.com/macula-io/macula-go.git build/macula-go
-          git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(tr -d '[:space:]' < abi/MACULA_GO_REF)"
+          git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(awk '{print $1}' abi/MACULA_GO_REF)"
 
       - uses: actions/setup-go@v5
         if: inputs.library == 'build'
@@ -207,9 +207,9 @@ jobs:
           lib = pathlib.Path(native().path).resolve()
           pkg = pathlib.Path(macula_py.__file__).resolve().parent
           assert pkg in lib.parents, f"loaded {lib}, not the wheel's own copy under {pkg}"
-          key = asyncio.run(NodeKey.generate("pq_pure"))
+          key = asyncio.run(NodeKey.generate("pq_hybrid"))
           signature = key.sign(b"smoke")
-          assert NodeKey.verify(b"smoke", signature, key.public_key(), "pq_pure")
+          assert NodeKey.verify(b"smoke", signature, key.public_key(), "pq_hybrid")
           print("ok:", lib.name, key.node_id_hex()[:16])
           PY
 

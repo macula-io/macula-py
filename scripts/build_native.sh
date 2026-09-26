@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 # Builds macula-go's shared C ABI library into src/macula_py/_native/ and its
-# teststation into build/, both from the macula-go ref in abi/MACULA_GO_REF,
-# and checks that abi/macula.h is that ref's header.
+# teststation into build/, both from the macula-go ref in abi/MACULA_GO_REF
+# ("<tag> <commit sha>"), and checks that the tag is still that commit and
+# abi/macula.h is its header.
 #
 # MACULA_GO_DIR: a macula-go checkout to build from (default: a clone in
-# build/macula-go). Needs Go >= 1.26 and a C compiler (cgo).
+# build/macula-go). Needs Go 1.27 and a C compiler (cgo).
 # Prints the export lines for the tests: eval "$(scripts/build_native.sh)".
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-ref="$(tr -d '[:space:]' < "$root/abi/MACULA_GO_REF")"
+read -r ref sha < "$root/abi/MACULA_GO_REF"
 src="${MACULA_GO_DIR:-$root/build/macula-go}"
 
 if [ ! -d "$src/.git" ]; then
   git clone --quiet git@github.com:macula-io/macula-go.git "$src" 2>/dev/null \
     || git clone --quiet https://github.com/macula-io/macula-go.git "$src"
 fi
-git -C "$src" fetch --quiet origin
+git -C "$src" fetch --quiet --tags origin
 git -C "$src" -c advice.detachedHead=false checkout --quiet "$ref"
+actual="$(git -C "$src" rev-parse "$ref^{commit}")"
+if [ "$actual" != "$sha" ]; then
+  echo "build_native: macula-go $ref is $actual, abi/MACULA_GO_REF records $sha" >&2
+  exit 1
+fi
 
 if ! cmp -s "$src/cabi/macula.h" "$root/abi/macula.h"; then
   echo "build_native: abi/macula.h differs from cabi/macula.h at macula-go $ref" >&2

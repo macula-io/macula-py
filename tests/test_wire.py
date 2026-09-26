@@ -140,18 +140,18 @@ class TestNativeError:
     @pytest.mark.parametrize(
         ("kind", "cls"),
         [
-            ("invalid_handle", "InvalidHandleError"),
-            ("not_found", "NotFoundError"),
-            ("not_shared", "NotSharedError"),
-            ("answered", "AlreadyAnsweredError"),
-            ("closed", "ClosedError"),
-            ("refused", "RefusedError"),
-            ("failed", "MaculaError"),
+            ("invalid_handle", InvalidHandleError),
+            ("not_found", NotFoundError),
+            ("not_shared", NotSharedError),
+            ("answered", AlreadyAnsweredError),
+            ("closed", ClosedError),
+            ("refused", RefusedError),
+            ("failed", MaculaError),
         ],
     )
     def test_each_kind_maps_to_its_class(self, kind, cls):
         e = native_error(f'{{"kind":"{kind}","message":"the message"}}')
-        assert type(e).__name__ == cls
+        assert type(e) is cls
         assert isinstance(e, MaculaError)
         assert "the message" in str(e)
 
