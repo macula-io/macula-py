@@ -11,14 +11,20 @@ from macula_py import (
     ProviderError,
     RelayError,
 )
+from macula_py._blocking import NativeCancelled
 from macula_py._wire import (
-    bytes_mode_for,
-    call_error,
-    content_error,
+    AlreadyAnsweredError,
+    ClosedError,
+    InvalidHandleError,
+    MaculaError,
+    MaculaTimeoutError,
+    NotFoundError,
+    RefusedError,
     decode_payload,
     encode_payload,
     id32,
     mcid50,
+    native_error,
 )
 
 
@@ -60,19 +66,6 @@ class TestDecodePayload:
         assert decode_payload('{"$bytes":"AQID","x":1}') == {"$bytes": "AQID", "x": 1}
 
 
-class TestBytesMode:
-    def test_hex_is_the_default(self):
-        assert bytes_mode_for(None) == 0
-        assert bytes_mode_for("hex") == 0
-
-    def test_tagged(self):
-        assert bytes_mode_for("tagged") == 1
-
-    def test_anything_else_is_refused(self):
-        with pytest.raises(ValueError, match="'hex' or 'tagged'"):
-            bytes_mode_for("raw")
-
-
 class TestId32:
     def test_hex_text(self):
         assert id32("ab" * 32) == b"\xab" * 32
@@ -98,28 +91,63 @@ class TestMcid50:
             mcid50(b"\x02" * 49)
 
 
-class TestCallError:
+class TestNativeError:
     def test_provider_error_carries_code_and_detail(self):
-        e = call_error("provider_error:handler_error:boom: with colon")
+        e = native_error('{"kind":"provider_error","message":"m","code":"handler_error","detail":"boom"}')
         assert isinstance(e, ProviderError)
-        assert (e.code, e.detail) == ("handler_error", "boom: with colon")
+        assert (e.code, e.detail) == ("handler_error", "boom")
+
+    def test_provider_error_detail_may_be_null(self):
+        e = native_error('{"kind":"provider_error","message":"m","code":"expired","detail":null}')
+        assert (e.code, e.detail) == ("expired", "")
 
     def test_relay_error_carries_code(self):
-        e = call_error("relay_error:unknown_next_peer")
+        e = native_error('{"kind":"relay_error","message":"m","code":"unknown_next_peer"}')
         assert isinstance(e, RelayError)
         assert e.code == "unknown_next_peer"
 
-    def test_other_text_is_a_plain_macula_error(self):
-        e = call_error("timeout")
-        assert type(e).__name__ == "MaculaError"
-        assert "timeout" in str(e)
-
-
-class TestContentError:
-    def test_not_shared(self):
-        assert isinstance(content_error("not_shared"), NotSharedError)
-
-    def test_unavailable_carries_detail(self):
-        e = content_error("unavailable:node a unreachable")
+    def test_unavailable_carries_every_failure(self):
+        e = native_error('{"kind":"unavailable","message":"m","failures":["a: unreachable","b: wrong hash"]}')
         assert isinstance(e, ContentUnavailableError)
-        assert e.detail == "node a unreachable"
+        assert e.failures == ["a: unreachable", "b: wrong hash"]
+
+    def test_timeout_is_a_timeout_error(self):
+        e = native_error('{"kind":"timeout","message":"call timed out"}')
+        assert isinstance(e, MaculaTimeoutError)
+        assert isinstance(e, TimeoutError)
+
+    def test_cancelled_is_the_native_cancelled_signal(self):
+        assert isinstance(native_error('{"kind":"cancelled","message":"m"}'), NativeCancelled)
+
+    def test_invalid_argument_is_a_value_error(self):
+        e = native_error('{"kind":"invalid_argument","message":"a JSON boolean"}')
+        assert isinstance(e, ValueError)
+        assert "a JSON boolean" in str(e)
+
+    @pytest.mark.parametrize(
+        ("kind", "cls"),
+        [
+            ("invalid_handle", "InvalidHandleError"),
+            ("not_found", "NotFoundError"),
+            ("not_shared", "NotSharedError"),
+            ("answered", "AlreadyAnsweredError"),
+            ("closed", "ClosedError"),
+            ("refused", "RefusedError"),
+            ("failed", "MaculaError"),
+        ],
+    )
+    def test_each_kind_maps_to_its_class(self, kind, cls):
+        e = native_error(f'{{"kind":"{kind}","message":"the message"}}')
+        assert type(e).__name__ == cls
+        assert isinstance(e, MaculaError)
+        assert "the message" in str(e)
+
+    def test_an_unknown_kind_is_loud_naming_it(self):
+        e = native_error('{"kind":"brand_new","message":"m"}')
+        assert type(e) is MaculaError
+        assert "brand_new" in str(e)
+
+    def test_text_that_is_not_the_contracts_json_is_loud(self):
+        e = native_error("plain text")
+        assert type(e) is MaculaError
+        assert "plain text" in str(e)
