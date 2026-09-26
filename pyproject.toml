@@ -1,27 +1,26 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=75", "wheel>=0.45"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "macula-py"
-version = "0.1.0"
-description = "Native Python client for the Macula mesh wire protocol -- QUIC transport, deterministic CBOR, Ed25519 identity, BLAKE3 content-addressing, unary RPC, PubSub, content transfer, and streaming RPC (both caller and provider roles)."
+version = "0.2.0"
+description = "A Python node on the macula 12 mesh: post-quantum identity and key exchange, calls, streams, pub/sub, the DHT and node-served content, over macula-go's C ABI."
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 authors = [{ name = "Macula" }]
 requires-python = ">=3.11"
-keywords = ["macula", "mesh", "quic", "rpc", "pubsub", "wire-protocol"]
+keywords = ["macula", "mesh", "quic", "rpc", "pubsub", "post-quantum"]
 classifiers = [
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
     "Topic :: System :: Networking",
     "Typing :: Typed",
+    "Framework :: AsyncIO",
 ]
-dependencies = [
-    "aioquic>=1.2.0",
-    "cryptography>=43.0.0",
-    "blake3>=1.0.0",
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/macula-io/macula-py"
@@ -33,10 +32,10 @@ dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+macula_py = ["py.typed", "_native/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "live: dials the real production demo fleet -- excluded from default CI, run explicitly with `pytest -m live`",
-]
-addopts = "-m 'not live'"
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
