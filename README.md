@@ -122,7 +122,8 @@ await caller.call(realm, procedure, payload, ucan=sub, proofs=[to_alice])
 ```
 
 A token is minted for the node that will present it. `RealmMemberRequired(key_id, can)`
-gates on a realm key instead, named by `macula_py.ucan.key_id(realm_key, profile)`.
+gates on a realm key instead, named by `macula_py.ucan.key_id(realm_public_key, profile)`
+(the key as carried, bytes).
 macula's `test/vectors/UCAN_V1.md` is the contract.
 
 ### Proofs for a realm and for a service

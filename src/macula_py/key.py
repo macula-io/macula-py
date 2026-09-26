@@ -13,7 +13,7 @@ from typing import Any, Literal, Mapping, Sequence
 
 from macula_py._blocking import run_blocking
 from macula_py._native import native
-from macula_py._wire import ClosedError, Id, decode_payload, encode_payload, id32
+from macula_py._wire import ClosedError, Id, MaculaError, decode_payload, encode_payload, id32
 from macula_py.device_request import DeviceRequest, Rule, request_json, rule_code
 
 Profile = Literal["pq_hybrid", "pq_pure"]
@@ -125,8 +125,12 @@ class NodeKey:
         """A UCAN (macula 12, D7) from this identity key for the node
         ``audience`` (its node_id), which alone can present it, granting each
         capability ``{"with": <MRI>, "can": <action>}`` until ``exp`` (Unix
-        seconds). ``prf`` names the parent it is delegated from, by
-        macula_py.ucan.proof_id: at most one. See macula_py.ucan."""
+        seconds). ``prf`` is a list naming the parent it is delegated from, by
+        macula_py.ucan.proof_id. A chain is linear: a token naming two
+        parents is minted, as macula mints it, and refused by every provider.
+        Signing runs on the calling thread (see sign). See macula_py.ucan."""
+        if isinstance(prf, str):
+            raise TypeError("macula-py: prf is a list of proof ids, not one id")
         caps = []
         for cap in capabilities:
             if set(cap) != {"with", "can"}:
@@ -156,7 +160,8 @@ class NodeKey:
         "signature"}``, sent beside the request's ``public_key``. rule is
         "http" (a join session's body, under the realm's JSON rule; a str is
         the body exactly as sent) or "mesh" (a mesh payload). A request with a
-        "caller" field is refused. See macula_py.device_request."""
+        "caller" field is refused. Signing runs on the calling thread (see
+        sign). See macula_py.device_request."""
         n = native()
         text = n.take_string(
             n.invoke(
@@ -168,13 +173,16 @@ class NodeKey:
                 rule_code(rule),
             )
         )
-        return json.loads(text or "null")
+        if text is None:
+            raise MaculaError("macula-py: the library returned no device request proof")
+        return json.loads(text)
 
     def ownership_proof(self, realm: Id, procedure: str, payload: Mapping[str, Any]) -> dict:
         """payload with an ``asserted_by`` block by which this key's node
         authorises its other fields for procedure in realm, now, with a fresh
         nonce; an earlier block is replaced. Send the result as the payload.
-        A payload carrying "caller" is refused. See macula_py.ownership_proof."""
+        A payload carrying "caller" is refused. Signing runs on the calling
+        thread (see sign). See macula_py.ownership_proof."""
         n = native()
         text = n.take_string(
             n.invoke(
@@ -185,7 +193,9 @@ class NodeKey:
                 encode_payload(dict(payload)).encode(),
             )
         )
-        return decode_payload(text or "null")  # type: ignore[return-value]
+        if text is None:
+            raise MaculaError("macula-py: the library returned no ownership-proven payload")
+        return decode_payload(text)  # type: ignore[return-value]
 
     def free(self) -> None:
         """Frees the native key. The NodeKey is unusable after."""

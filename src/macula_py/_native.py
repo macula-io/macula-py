@@ -13,7 +13,7 @@ import ctypes
 import threading
 from typing import Any
 
-from macula_py._abi import ABI_VERSION, FUNCTIONS
+from macula_py._abi import ABI_VERSION, FUNCTIONS, LIBRARY_FLOOR
 from macula_py._library import library_path
 from macula_py._wire import MaculaError, native_error
 
@@ -43,7 +43,14 @@ class Native:
         self.path = path
         self.lib = ctypes.CDLL(path)
         for name, (returns, parameters) in FUNCTIONS.items():
-            function = getattr(self.lib, name)
+            try:
+                function = getattr(self.lib, name)
+            except AttributeError:
+                # New functions keep the ABI version, so an older library
+                # passes that check and lacks them: name the floor.
+                raise MaculaError(
+                    f"macula-py: {path} has no {name}; this macula-py needs macula-go {LIBRARY_FLOOR}'s library or later"
+                ) from None
             function.restype = _C_TYPES[returns]
             function.argtypes = [_C_TYPES[p] for p in parameters]
         version = self.lib.macula_abi_version()

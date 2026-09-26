@@ -9,6 +9,9 @@ c_char_p) so they can be freed with macula_free_string / macula_free_bytes.
 from __future__ import annotations
 
 ABI_VERSION = 1
+# The oldest macula-go release whose library exports every function below
+# (a new function does not change ABI_VERSION).
+LIBRARY_FLOOR = "v0.17.0"
 
 H = "macula_handle"
 ERR = "char**"

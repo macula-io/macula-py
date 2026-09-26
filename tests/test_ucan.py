@@ -58,6 +58,10 @@ def test_minting_refuses_what_it_cannot_express():
         key.ucan("ab" * 31, [], exp=exp)
     with pytest.raises(InvalidArgumentError):
         key.ucan("ab" * 32, [{"with": "mri:realm:x", "can": "invoke"}], exp=exp, fct={"ok": float("nan")})
+    # One proof id as a bare str would be split into its characters.
+    parent = key.ucan("ab" * 32, [{"with": "mri:realm:x", "can": "invoke"}], exp=exp)
+    with pytest.raises(TypeError):
+        key.ucan("ab" * 32, [{"with": "mri:realm:x", "can": "invoke"}], exp=exp, prf=proof_id(parent))
 
 
 @pytest.fixture(scope="module", params=["pq_pure", "pq_hybrid"])

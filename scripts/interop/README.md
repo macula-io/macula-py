@@ -41,3 +41,16 @@ a handler receives it, which the realm's mesh handler builds.
 
 Run each within 60 s of signing (the proofs carry the time they were made).
 The scripts run the two halves back to back.
+
+## Last run, 0.3.0 (2026-09-26)
+
+- `ownership_proof.sh`: macula v12.12.0 compiled in
+  `ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39b...82ac70` (OTP 28), mcl-om
+  `91e59d87`, macula-go v0.17.0's escript: `ok; one field changed:
+  {error,bad_signature}; the same proof again: {error,replayed}`, exit 0. With
+  a field changed in Python after signing: `{error,bad_signature}` first, exit
+  1. (The escript prints "go-signed"; it is its own label.)
+- `device_request.sh`: macula-realm `e24701b`, Elixir 1.18.4 on OTP 28.4.3:
+  `py-signed: :ok; one field changed: {:error, :bad_proof}; the same proof
+  again: {:error, :replayed}`, exit 0. With the body changed after signing:
+  `{:error, :bad_proof}` first, exit 1.
