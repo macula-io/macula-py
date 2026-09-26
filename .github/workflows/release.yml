@@ -1,54 +1,67 @@
 name: Release to PyPI
 
+# A v* tag publishes that version's five platform wheels to PyPI, through
+# Trusted Publishing (OIDC; no token is stored anywhere). Nothing publishes
+# unless the tag names pyproject's version, abi/MACULA_GO_REF is a macula-go
+# release tag, every released library passes its checksum and attestation,
+# the suite is green against that tag, and all five wheels built.
+
 on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+
 jobs:
-  publish:
-    name: publish to PyPI
+  guard:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Validate version matches pyproject.toml
+      - name: The tag names pyproject's version, and macula-go is pinned to a release
         run: |
-          PACKAGE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
-          if [ "$PACKAGE_VERSION" != "${{ steps.version.outputs.VERSION }}" ]; then
-            echo "::error::Tag version (${{ steps.version.outputs.VERSION }}) doesn't match pyproject.toml version ($PACKAGE_VERSION)"
+          set -eu
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not name pyproject's version $version"
             exit 1
           fi
+          ref=$(tr -d '[:space:]' < abi/MACULA_GO_REF)
+          case "$ref" in
+            v*) ;;
+            *) echo "::error::abi/MACULA_GO_REF is $ref, not a macula-go release tag"; exit 1 ;;
+          esac
 
-      # Rebuilds and re-runs the offline suite here rather than trusting
-      # an artifact from ci.yml's own run -- this workflow triggers off a
-      # tag push, a separate event from the branch push ci.yml already
-      # validated, so there's no prior run's output to reuse.
-      - run: pip install -e ".[dev]"
-      - run: pytest -m "not live"
+  test:
+    needs: guard
+    uses: ./.github/workflows/ci.yml
 
-      - name: Build sdist and wheel
+  wheels:
+    needs: guard
+    uses: ./.github/workflows/wheels.yml
+    with:
+      library: release
+
+  publish:
+    needs: [test, wheels]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Every platform's wheel is here
         run: |
-          pip install build
-          python -m build
-
-      # OIDC Trusted Publishing -- no token/secret of any kind. PyPI
-      # exchanges this job's own ambient GitHub Actions OIDC token for a
-      # short-lived upload credential, but ONLY because the pending
-      # publisher already registered for this exact (owner, repo,
-      # workflow filename) triple -- see the module doc in this repo's
-      # own PyPI project settings. release/v1 (not a pinned vX.Y.Z) is
-      # PyPA's own recommended way to consume this action: that branch is
-      # force-updated with signed commits specifically for this trust
-      # model, unlike the SHA-pinning convention used elsewhere.
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+          set -eu
+          ls -l dist
+          for plat in manylinux_2_28_x86_64 manylinux_2_28_aarch64 macosx_12_0_arm64 macosx_12_0_x86_64 win_amd64; do
+            ls dist/*-py3-none-*"$plat"*.whl > /dev/null || { echo "::error::no $plat wheel"; exit 1; }
+          done
+          [ "$(ls dist/*.whl | wc -l)" -eq 5 ] || { echo "::error::expected 5 wheels"; exit 1; }
+      # release/v1 is PyPA's recommended way to consume this action for
+      # Trusted Publishing.
+      - uses: pypa/gh-action-pypi-publish@release/v1

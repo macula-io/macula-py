@@ -1,0 +1,196 @@
+name: Wheels
+
+# One py3-none-<platform> wheel per platform, each carrying macula-go's shared
+# C ABI library at abi/MACULA_GO_REF, built on a GitHub-hosted runner of that
+# platform. Linux builds inside the manylinux_2_28 image so the wheel loads on
+# any glibc >= 2.28, and auditwheel refuses a library needing newer symbols.
+#
+# library: "build" compiles the library from the pinned ref on each runner
+# (cgo needs that platform's C toolchain; no cross-compiling). "release" uses
+# the libraries attached to the pinned macula-go release tag, each checked
+# against SHA256SUMS and its build provenance attestation first.
+#
+# Each wheel is then installed into a fresh virtualenv with a Python the
+# build did not use, and must generate and sign with a key from its own
+# packaged library.
+
+on:
+  workflow_call:
+    inputs:
+      library:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    if: inputs.library == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and verify macula-go's released libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/fetch_native.sh build/native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-libraries
+          path: build/native/
+          if-no-files-found: error
+
+  wheel:
+    needs: fetch
+    if: ${{ !cancelled() && (inputs.library == 'build' || needs.fetch.result == 'success') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            plat: manylinux_2_28_x86_64
+            released: libmacula-linux-x64.so
+            packaged: libmacula.so
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            container: quay.io/pypa/manylinux_2_28_aarch64
+            plat: manylinux_2_28_aarch64
+            released: libmacula-linux-arm64.so
+            packaged: libmacula.so
+          - name: macos-arm64
+            runner: macos-latest
+            macos_target: "12.0"
+            released: libmacula-macos-arm64.dylib
+            packaged: libmacula.dylib
+          - name: macos-x64
+            runner: macos-15-intel
+            macos_target: "12.0"
+            released: libmacula-macos-x64.dylib
+            packaged: libmacula.dylib
+          - name: windows-x64
+            runner: windows-latest
+            released: macula-windows-x64.dll
+            packaged: macula.dll
+    name: wheel (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_target }}
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out macula-go at the pinned ref
+        if: inputs.library == 'build'
+        shell: bash
+        run: |
+          git clone --quiet https://github.com/macula-io/macula-go.git build/macula-go
+          git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(tr -d '[:space:]' < abi/MACULA_GO_REF)"
+
+      - uses: actions/setup-go@v5
+        if: inputs.library == 'build'
+        with:
+          go-version-file: build/macula-go/go.mod
+          cache: false
+
+      - uses: actions/setup-python@v5
+        if: matrix.container == ''
+        with:
+          python-version: |
+            3.11
+            3.13
+
+      - name: Install MinGW gcc for cgo (Windows)
+        if: inputs.library == 'build' && runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Build the library (Windows, MinGW gcc)
+        if: inputs.library == 'build' && runner.os == 'Windows'
+        shell: msys2 {0}
+        run: CC=gcc MACULA_GO_DIR="$PWD/build/macula-go" scripts/build_native.sh
+
+      - name: Build the library
+        if: inputs.library == 'build' && runner.os != 'Windows'
+        shell: bash
+        run: MACULA_GO_DIR="$PWD/build/macula-go" scripts/build_native.sh
+
+      - uses: actions/download-artifact@v4
+        if: inputs.library == 'release'
+        with:
+          name: native-libraries
+          path: build/native
+
+      - name: Package the released library
+        if: inputs.library == 'release'
+        shell: bash
+        run: |
+          mkdir -p src/macula_py/_native
+          cp "build/native/${{ matrix.released }}" "src/macula_py/_native/${{ matrix.packaged }}"
+
+      # Go 1.27 needs macOS 12, and the wheel's tag must not promise an
+      # older macOS than the library's own minimum.
+      - name: The library targets macOS ${{ matrix.macos_target }}
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          lib=src/macula_py/_native/libmacula.dylib
+          minos=$(vtool -show-build "$lib" | awk '/minos/ {print $2; exit}')
+          echo "minos: $minos"
+          [ "$minos" = "${{ matrix.macos_target }}" ] || { echo "::error::$lib targets macOS $minos, the wheel says ${{ matrix.macos_target }}"; exit 1; }
+
+      - name: Build the wheel (manylinux)
+        if: matrix.container != ''
+        shell: bash
+        run: |
+          /opt/python/cp313-cp313/bin/python -m pip install --quiet build
+          /opt/python/cp313-cp313/bin/python -m build --wheel --outdir build/raw .
+          auditwheel repair --plat "${{ matrix.plat }}" --wheel-dir dist build/raw/*.whl
+
+      - name: Build the wheel
+        if: matrix.container == ''
+        shell: bash
+        # setup-python makes the last version listed (3.13) the default python.
+        run: |
+          python -m pip install --quiet build
+          python -m build --wheel --outdir dist .
+
+      - name: Smoke-test the wheel in a fresh virtualenv, on Python 3.11
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel=$(ls dist/*.whl)
+          echo "wheel: $wheel"
+          case "$wheel" in *py3-none-*) ;; *) echo "not a py3-none wheel: $wheel" >&2; exit 1 ;; esac
+          if [ -x /opt/python/cp311-cp311/bin/python ]; then py=/opt/python/cp311-cp311/bin/python
+          elif command -v python3.11 >/dev/null; then py=python3.11
+          else py="py -3.11"; fi
+          $py -m venv "$RUNNER_TEMP/smoke"
+          bin="$RUNNER_TEMP/smoke/bin"; [ -d "$bin" ] || bin="$RUNNER_TEMP/smoke/Scripts"
+          "$bin/python" -m pip install --quiet "$wheel"
+          cd "$RUNNER_TEMP"
+          env -u MACULA_LIBRARY_PATH "$bin/python" - <<'PY'
+          import asyncio, pathlib
+          import macula_py
+          from macula_py import NodeKey
+          from macula_py._native import native
+          lib = pathlib.Path(native().path).resolve()
+          pkg = pathlib.Path(macula_py.__file__).resolve().parent
+          assert pkg in lib.parents, f"loaded {lib}, not the wheel's own copy under {pkg}"
+          key = asyncio.run(NodeKey.generate("pq_pure"))
+          signature = key.sign(b"smoke")
+          assert NodeKey.verify(b"smoke", signature, key.public_key(), "pq_pure")
+          print("ok:", lib.name, key.node_id_hex()[:16])
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: dist/*.whl
+          if-no-files-found: error

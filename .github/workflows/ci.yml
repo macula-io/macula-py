@@ -3,22 +3,54 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "plans/**", "assets/**"]
   pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-test:
-    name: build, offline tests
+  test:
+    name: tests (Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check out macula-go at the pinned ref
+        run: |
+          git clone --quiet https://github.com/macula-io/macula-go.git build/macula-go
+          git -C build/macula-go -c advice.detachedHead=false checkout --quiet "$(tr -d '[:space:]' < abi/MACULA_GO_REF)"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: build/macula-go/go.mod
+          cache: false
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python }}
+
+      # Builds the library and the teststation, and fails when abi/macula.h
+      # is not the header at the pinned ref.
+      - name: Build macula-go's library and teststation
+        shell: bash
+        run: MACULA_GO_DIR="$PWD/build/macula-go" scripts/build_native.sh | sed 's/^export //' >> "$GITHUB_ENV"
+
       - run: pip install -e ".[dev]"
-      # Offline only -- exercises pure logic (identity, deterministic
-      # CBOR, golden vectors against the real Erlang encoder). Live tests
-      # dial the real production fleet, which has no uptime guarantee and
-      # must never block an unrelated PR -- same convention every sibling
-      # Macula SDK uses for its own live-tagged tests. Run those manually:
-      #   pytest -m live
-      - run: pytest -m "not live"
+
+      # The live check (tests/live) skips unless MACULA_PY_LIVE is set; CI
+      # never dials the fleet.
+      - run: python -m pytest -v
+
+  # The release builds its wheels from macula-go's released libraries instead.
+  wheels:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    uses: ./.github/workflows/wheels.yml
+    with:
+      library: build
