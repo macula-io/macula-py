@@ -1,0 +1,5 @@
+# LF everywhere, Windows checkouts included: scripts compare abi/ files byte
+# for byte and read abi/MACULA_GO_REF with the shell.
+* text=auto eol=lf
+*.bin binary
+*.svg text eol=lf
