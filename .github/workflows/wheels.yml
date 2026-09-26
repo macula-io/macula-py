@@ -62,15 +62,18 @@ jobs:
           - name: macos-arm64
             runner: macos-latest
             macos_target: "13.0"
+            plat: macosx_13_0_arm64
             released: libmacula-macos-arm64.dylib
             packaged: libmacula.dylib
           - name: macos-x64
             runner: macos-15-intel
             macos_target: "13.0"
+            plat: macosx_13_0_x86_64
             released: libmacula-macos-x64.dylib
             packaged: libmacula.dylib
           - name: windows-x64
             runner: windows-latest
+            plat: win_amd64
             released: macula-windows-x64.dll
             packaged: macula.dll
     name: wheel (${{ matrix.name }})
@@ -157,9 +160,30 @@ jobs:
         if: matrix.container == ''
         shell: bash
         # setup-python makes the last version listed (3.13) the default python.
+        # Its macOS Python is universal2, and the wheel would inherit that tag
+        # though the library is one architecture: name the platform instead.
+        env:
+          _PYTHON_HOST_PLATFORM: ${{ runner.os == 'macOS' && format('macosx-{0}-{1}', matrix.macos_target, runner.arch == 'ARM64' && 'arm64' || 'x86_64') || '' }}
         run: |
           python -m pip install --quiet build
           python -m build --wheel --outdir dist .
+
+      - name: The wheel is tagged ${{ matrix.plat }}, and the library is that architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel=$(ls dist/*.whl)
+          [ "$(ls dist/*.whl | wc -l)" -eq 1 ] || { echo "::error::expected one wheel"; exit 1; }
+          case "$(basename "$wheel")" in
+            *-py3-none-*${{ matrix.plat }}*.whl) echo "tag ok: $wheel" ;;
+            *) echo "::error::$wheel is not tagged ${{ matrix.plat }}"; exit 1 ;;
+          esac
+          if [ "${{ runner.os }}" = macOS ]; then
+            lib=src/macula_py/_native/libmacula.dylib
+            archs=$(lipo -archs "$lib")
+            want=$([ "${{ runner.arch }}" = ARM64 ] && echo arm64 || echo x86_64)
+            [ "$archs" = "$want" ] || { echo "::error::$lib is $archs, the wheel says $want"; exit 1; }
+          fi
 
       - name: Smoke-test the wheel in a fresh virtualenv, on Python 3.11
         shell: bash
