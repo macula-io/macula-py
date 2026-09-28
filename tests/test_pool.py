@@ -260,6 +260,34 @@ class TestCancellation:
                     await waiting
                 assert time.monotonic() - started < 1.0
 
+    async def test_a_call_enters_a_providers_handler_at_most_once(self, env):
+        """macula-go#8, fixed in libmacula v0.18.1: a call walks to the next provider only when it cannot reach a
+        station, never after its CALL went out. Two providers serve one procedure from the two stations and answer
+        slower than a call's share of its deadline: the call is answered by one of them, which is entered once, and
+        the other is never entered. On v0.17.0 the call timed out at the first, was sent again to the second, and
+        both handlers ran."""
+        procedure = f"{env.org}/once"
+        entered: list[str] = []
+
+        async def slow(request):
+            entered.append(request.caller)
+            await asyncio.sleep(2.5)
+            return "answered"
+
+        first = await node(env, 0, admitted=True)
+        second = await node(env, 1, admitted=True)
+        caller = await node(env, 1)
+        async with first, second, caller, await first.serve(env.realm_id, procedure, slow), await second.serve(
+            env.realm_id, procedure, slow
+        ):
+            async def both_advertised() -> bool:
+                return len(await caller.providers(env.realm_id, procedure)) == 2
+
+            await eventually("both providers", both_advertised, 15)
+            assert await caller.call(env.realm_id, procedure, {}, timeout_ms=4_000) == "answered"
+            await asyncio.sleep(1)
+            assert len(entered) == 1, f"the call entered {len(entered)} handlers"
+
     async def test_a_timed_out_call_on_a_task_wait_for_is_cancelled_not_left_running(self, env):
         provider = await node(env, 0, admitted=True)
         procedure = f"{env.org}/slow"

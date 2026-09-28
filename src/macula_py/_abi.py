@@ -9,9 +9,11 @@ c_char_p) so they can be freed with macula_free_string / macula_free_bytes.
 from __future__ import annotations
 
 ABI_VERSION = 1
-# The oldest macula-go release whose library exports every function below
-# (a new function does not change ABI_VERSION).
-LIBRARY_FLOOR = "v0.17.0"
+# The oldest macula-go release this macula-py supports: its library exports
+# every function below (a new function does not change ABI_VERSION), and it
+# carries at-most-once delivery (macula-go#8, v0.18.1) and the deadline fix
+# (macula-go#12, v0.18.2), which an older library would silently lack.
+LIBRARY_FLOOR = "v0.18.2"
 
 H = "macula_handle"
 ERR = "char**"
@@ -68,6 +70,7 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
         "char*",
         [H, REALM, "const char*", "const char*", "const uint8_t*", "const char*", "const char*", "int64_t", H, ERR],
     ),
+    "macula_pool_call_opts": ("char*", [H, REALM, "const char*", "const char*", "const char*", "int64_t", H, ERR]),
     "macula_pool_providers": ("char*", [H, REALM, "const char*", "int64_t", H, ERR]),
     # Publish / subscribe
     "macula_pool_publish": ("void", [H, REALM, "const char*", "const char*", "int64_t", ERR]),
@@ -80,6 +83,10 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     "macula_pool_serve_stream": (H, [H, REALM, "const char*", "int32_t", ERR]),
     "macula_pool_serve_gated": (H, [H, REALM, "const char*", "const char*", ERR]),
     "macula_pool_serve_stream_gated": (H, [H, REALM, "const char*", "int32_t", "const char*", ERR]),
+    # Sealing's *_opts functions (libmacula v0.18.0): declared, as the header requires, and not yet used: the Python
+    # API exposes sealing from the release on libmacula v0.19.0.
+    "macula_pool_serve_opts": (H, [H, REALM, "const char*", "const char*", ERR]),
+    "macula_pool_serve_stream_opts": (H, [H, REALM, "const char*", "int32_t", "const char*", ERR]),
     "macula_served_next": ("char*", [H, "int64_t", H, "macula_handle*", "int32_t*", ERR]),
     "macula_pending_reply": ("void", [H, "const char*", ERR]),
     "macula_pending_error": ("void", [H, "const char*", ERR]),
@@ -88,6 +95,10 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     "macula_pool_open_stream": (
         H,
         [H, REALM, "const char*", "int32_t", "const char*", "const uint8_t*", "int64_t", "int64_t", H, ERR],
+    ),
+    "macula_pool_open_stream_opts": (
+        H,
+        [H, REALM, "const char*", "int32_t", "const char*", "const char*", "int64_t", "int64_t", H, ERR],
     ),
     "macula_pool_open_stream_with": (
         H,

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.1 (2026-09-29)
+
+On macula-go v0.18.2's C ABI (was v0.17.0), for two fixes a Python caller
+gets from the library:
+
+### Fixed
+
+- **A call enters a provider's handler at most once** (macula-go#8, fixed in
+  v0.18.1). A call used to move to the next provider after any failure but a
+  provider's answer, a timeout included, and a provider slower than one
+  candidate's share of the deadline was called again elsewhere: **a handler
+  that is not idempotent could run twice**. Now the call moves on only when a
+  provider's station cannot be reached, before anything is sent; once the
+  call has gone out, its outcome is returned as it is. A reply that is lost
+  ends in a timeout, and the handler ran once or not at all.
+- **No call goes out with a provider deadline past its caller's**
+  (macula-go#12, v0.18.2).
+
+### Changed
+
+- The library floor is macula-go v0.18.2: an older library lacks these
+  fixes. `abi/macula.h` is v0.18.2's, and `macula_py._abi` declares its four
+  `*_opts` functions (sealing, v0.18.0) because the header has them. Nothing
+  in the Python API uses them yet: sealed calls and streams, and the seal
+  report, come in the release on macula-go v0.19.0.
+
 ## 0.3.0 (2026-09-26)
 
 On macula-go v0.17.0's C ABI (was v0.13.0).
