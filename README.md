@@ -18,9 +18,12 @@
 
 ---
 
-> **Status, 2026-09-26:** on the **macula 12** wire: ML-DSA-87 identities (as
+> **Status, 2026-09-29:** on the **macula 12** wire: ML-DSA-87 identities (as
 > the ML-DSA-87 + RSA-PSS-4096 composite in `pq_hybrid`, the fleet's profile),
-> ML-KEM hybrid key exchange, signed requests. Calls and streams by direct dial,
+> ML-KEM hybrid key exchange, signed requests, and since 0.4.0 handshake v5
+> (the session bound to its TLS channel) and macula 13's end-to-end sealing
+> with the caller's seal report, checked live against macula 13.2.2 both ways.
+> Calls and streams by direct dial,
 > serving (under an org or in a node's own namespace, open or gated on a
 > post-quantum UCAN), publish/subscribe, the DHT and node-served content are
 > tested against two in-process macula 12 stations on every CI run. Device
@@ -89,10 +92,10 @@ namespace (`~<node_id>/<name>`, see `Pool.own_procedure`) need none.
 | | |
 |---|---|
 | `NodeKey` | `generate`, `load`, `load_or_create`, `save`, `node_id`, `public_key`, `profile`, `sign`, `verify`, `free`; `ucan`, `device_request_proof`, `ownership_proof` (below) |
-| `Pool.connect` | seeds, `realm_trust`, and the pool's tuning; `async with` closes it |
-| calls | `call`, `providers`; `call(..., ucan=, proofs=)` presents a UCAN |
-| serving | `serve(realm, procedure, handler, policy=None)`: handler(request) returns the result, directly or as an awaitable; an exception reaches the caller as a `ProviderError` of code `handler_error` |
-| streams | `open_stream`, `serve_stream`; a `Stream` has `send`, `send_value`, `close_send`, `reply`, `abort`, `close`, `recv`, and iterates its frames |
+| `Pool.connect` | seeds, `realm_trust`, `kem_advertise` (sealing, below), and the pool's tuning; `async with` closes it |
+| calls | `call`, `call_report`, `providers`; `call(..., ucan=, proofs=)` presents a UCAN, `confidential=` seals it |
+| serving | `serve(realm, procedure, handler, policy=None, confidential=None)`: handler(request) returns the result, directly or as an awaitable; an exception reaches the caller as a `ProviderError` of code `handler_error` |
+| streams | `open_stream`, `serve_stream`; a `Stream` has `send`, `send_value`, `close_send`, `reply`, `abort`, `close`, `recv`, `report`, and iterates its frames |
 | pub/sub | `publish`, `subscribe`; a `Subscription` iterates its events, or `next(timeout_ms)` |
 | content | `share_content`, `unshare_content`, `get_content` |
 | DHT | `find_record`, `find_records`, `find_records_by_type`, `put_record` |
@@ -126,6 +129,47 @@ gates on a realm key instead, named by `macula_py.ucan.key_id(realm_public_key, 
 (the key as carried, bytes).
 macula's `test/vectors/UCAN_V1.md` is the contract.
 
+### Sealing
+
+macula 13 seals a call's or a stream's payload end to end to the provider's
+KEM key (E2E seal scheme 1): stations route what they cannot read. It is off
+until a provider opts in, and a caller seals whenever it can:
+
+```python
+# The provider names its KEM key in its advertisements.
+provider = await Pool.connect(key, seeds, realm_trust=trust, kem_advertise=True)
+served = await provider.serve(realm, procedure, handler, confidential="required")
+
+# The caller seals to it: "preferred" (the default) whenever the provider's
+# advertisement names a key, "required" never calls one that names none.
+result, report = await caller.call_report(realm, procedure, payload, confidential="required")
+assert report.sealed and report.provider == provider.node_id()  # seal_key_id: the key, 16 hex
+```
+
+- `kem_advertise` is off by default. Enable it only once every station runs
+  macula 12.11 or later and every caller can seal (macula 13, macula-go 0.18,
+  macula-py 0.4 or later).
+- A served procedure is `confidential="preferred"` by default: it names the
+  key when the pool advertises one, and still takes a clear call while its last
+  keyless advertisement could be served. `"required"` refuses every clear call
+  (`sealed_required`) and needs `kem_advertise`; `"off"` serves in the clear.
+  `request.sealed` says whether a call came sealed; its payload is the opened
+  plaintext either way.
+- A caller cannot ask for `"off"` (`InvalidArgumentError`): only an
+  advertisement naming no key is called in the clear, and a sealed call never
+  falls back to the clear. What could not be kept confidential raises
+  `ConfidentialityError`, its `reason` one of `no_kem_key`, `key_mismatch`,
+  `reply_not_opened`, `clear_answer_to_sealed`, `kem_advertise_disabled`.
+- The seal report states that sealing ran on the exchange behind a result,
+  nothing more. A stream's, `stream.report()`, settles on the provider's first
+  chunk or reply; before that it raises `NotSettledError`, and on a served
+  stream `NotACallerError`.
+
+What stays visible: a request's UCAN and proofs, sizes, timing and routing.
+Content (`share_content`) is public by design and travels in the clear.
+macula-go's `cabi/CONTRACT.md` ("Confidentiality", "The seal report") is the
+contract.
+
 ### Proofs for a realm and for a service
 
 `NodeKey.device_request_proof(realm, procedure, request, rule)` signs a
@@ -154,7 +198,8 @@ end.
 Errors are typed: `ProviderError`, `RelayError`, `StreamError`,
 `NotSharedError`, `ContentUnavailableError`, `NoProviderError`, `MaculaTimeoutError` (also a
 `TimeoutError`), `InvalidArgumentError` (also a `ValueError`),
-`ClosedError`, `RefusedError`, all `MaculaError`.
+`ClosedError`, `RefusedError`, `ConfidentialityError`, `NotSettledError`,
+`NotACallerError`, all `MaculaError`.
 
 ## Development
 
@@ -179,7 +224,10 @@ namespace under a throwaway realm. CI never runs it.
 `scripts/interop/ownership_proof.sh` and `scripts/interop/device_request.sh`
 check proofs this binding signs against the verifiers themselves: mcl_om's
 (in macula's pinned CI image), after the payload has crossed a station as a
-provider receives it, and the realm's. See `scripts/interop/README.md`.
+provider receives it, and the realm's. `scripts/interop/v5.sh` and
+`scripts/interop/sealed.sh` run handshake v5 against a macula station, and
+sealed calls and streams with their seal reports both ways against a macula
+node. See `scripts/interop/README.md`.
 
 A `v*` tag publishes to PyPI through Trusted Publishing, using only
 macula-go's released libraries, each checked against the release's

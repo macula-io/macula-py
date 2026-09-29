@@ -1,4 +1,4 @@
-# Interop checks against the verifiers themselves
+# Interop checks against macula itself
 
 The unit tests hold every proof's bytes to its verifier's vector. These
 scripts go further, once per release: a proof macula-py makes is handed to the
@@ -41,6 +41,39 @@ a handler receives it, which the realm's mesh handler builds.
 
 Run each within 60 s of signing (the proofs carry the time they were made).
 The scripts run the two halves back to back.
+
+## Handshake v5 and sealing, against macula
+
+```sh
+eval "$(scripts/build_native.sh)"          # libmacula, MACULA_TESTSTATION and build/macula-go
+MACULA_BUILD=<macula 13.2.0 or later, compiled> scripts/interop/v5.sh [pq_hybrid|pq_pure]
+MACULA_BUILD=<macula 13.1.0 or later, compiled> scripts/interop/sealed.sh [pq_hybrid|pq_pure]
+```
+
+`v5.sh` runs macula-go's `erlang_v5_station.escript` (a bare macula station on
+macula's own `macula_peering` and `macula_quic`, in macula's pinned CI image)
+and dials it with a macula-py pool (`pyv5link.py`). Each side derives the
+session binding from its own TLS exporter. It passes when the station counted
+a v5 connection and no v4 one, every connection end drained, and the pool's
+link stayed up while the station probed it with `liveness_ping`.
+
+`sealed.sh` runs through macula-go's teststation: macula-go's
+`erlang_sealed.escript` serves `~<node>/vault` and `~<node>/watch`
+confidential required and `pysealed.py` calls and streams to them sealed, then
+the other way round, where the Erlang caller also calls the Python provider
+clear and must be refused `sealed_required`. Every seal report, the Python
+caller's and the Erlang caller's, must say sealed, the provider called and a
+key id. `PYTHON` names the interpreter to run the Python side with.
+
+## Last run, 0.4.0 (2026-09-29)
+
+- `v5.sh` and `sealed.sh`, both profiles, against macula 13.2.2 from hex
+  compiled in `ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39b...82ac70` (OTP
+  28), macula-go v0.20.0's escripts and teststation: PASS. The station counted
+  `v5_connections => 1, v4_connections => 0` in each profile; the Python
+  caller's reports were sealed to the Erlang provider under one key for the
+  call and the stream, the Erlang caller's to the Python provider, and the
+  clear call was refused `sealed_required`.
 
 ## Last run, 0.3.0 (2026-09-26)
 

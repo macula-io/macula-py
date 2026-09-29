@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.4.0 (2026-09-29)
+
+On macula-go v0.20.0's C ABI (was v0.18.2): macula 13's end-to-end sealing,
+the caller's seal report, and handshake v5.
+
+### Added
+
+- **Sealed calls and streams** (macula 13's E2E seal scheme 1, macula-go
+  v0.18.0). `Pool.connect(kem_advertise=True)` names the node's KEM key in the
+  advertisements of what it serves confidentially; it is off by default.
+  `serve` and `serve_stream` take `confidential=` (`"preferred"`, the default,
+  `"required"` or `"off"`), and `request.sealed` says whether a call came
+  sealed. `call` and `open_stream` take `confidential=` (`"preferred"`, the
+  default, seals whenever the provider's advertisement names a key;
+  `"required"` never calls one that names none; `"off"` is refused). What
+  could not be kept confidential raises `ConfidentialityError` (`reason`,
+  `named`, `found`).
+- **The seal report** (macula's DESIGN_E2E_SEAL_REPORT, macula-go v0.19.0):
+  `Pool.call_report` returns `Reported(result, report)`, and `Stream.report()`
+  a caller stream's; a `SealReport` has `sealed`, `provider` and
+  `seal_key_id`. A stream's raises `NotSettledError` before it settles and
+  `NotACallerError` on a served stream.
+- `scripts/interop/v5.sh` and `scripts/interop/sealed.sh`: handshake v5
+  against a macula station, and sealed calls and streams with their seal
+  reports both ways against a macula node.
+
+### Changed
+
+- **Handshake v5** (macula-go v0.20.0): every link binds its session to its
+  TLS channel and carries no per-frame neighbour signature after HELLO. It
+  comes with the library; nothing in the Python API changes.
+- The library floor is macula-go v0.20.0. `call`, `serve`, `serve_stream` and
+  `open_stream` go through the ABI's `*_opts` functions, whose one options set
+  carries a UCAN, its proofs and the confidentiality.
+
 ## 0.3.1 (2026-09-29)
 
 On macula-go v0.18.2's C ABI (was v0.17.0), for two fixes a Python caller
