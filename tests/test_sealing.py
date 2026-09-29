@@ -70,13 +70,21 @@ class TestConnect:
     async def test_kem_advertise_is_a_bool_and_off_by_default(self, env):
         s = env.stations[0]
         key = await NodeKey.generate("pq_pure")
-        with pytest.raises(TypeError):
-            await Pool.connect(key, [Seed(s.host, s.port, s.node_id)], kem_advertise=1)
+        try:
+            with pytest.raises(TypeError):
+                await Pool.connect(key, [Seed(s.host, s.port, s.node_id)], kem_advertise=1)
+        finally:
+            key.free()
         # Off by default: serving required needs it, and says so.
         provider = await node(env, 0)
         async with provider:
             with pytest.raises(ConfidentialityError) as refused:
                 await provider.serve(env.realm_id, provider.own_procedure("x"), lambda r: 1, confidential="required")
+            assert refused.value.reason == "kem_advertise_disabled"
+            with pytest.raises(ConfidentialityError) as refused:
+                await provider.serve_stream(
+                    env.realm_id, provider.own_procedure("y"), StreamMode.SERVER, _nothing, confidential="required"
+                )
             assert refused.value.reason == "kem_advertise_disabled"
 
 
@@ -228,6 +236,20 @@ class TestSealReport:
             assert report.sealed is True
             assert report.provider == provider.node_id()
             assert report.seal_key_id is not None and KEY_ID.match(report.seal_key_id)
+
+    async def test_a_pinned_call_reports_the_provider_pinned(self, env):
+        provider = await node(env, 0, kem_advertise=True)
+        other = await node(env, 0, kem_advertise=True)
+        procedure = provider.own_procedure("reported_pinned")
+        caller = await node(env, 1)
+        async with provider, other, caller, await provider.serve(env.realm_id, procedure, lambda r: 1):
+            result, report = await caller.call_report(
+                env.realm_id, procedure, {}, provider=provider.node_id(), confidential="required"
+            )
+            assert result == 1
+            assert (report.sealed, report.provider) == (True, provider.node_id())
+            with pytest.raises(NoProviderError):
+                await caller.call_report(env.realm_id, procedure, {}, provider=other.node_id())
 
     async def test_a_call_to_a_provider_that_names_no_key_reports_clear_with_no_key_id(self, env):
         provider = await node(env, 0)
