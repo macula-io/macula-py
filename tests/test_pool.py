@@ -335,9 +335,11 @@ class TestServingEdges:
         reported = quiet_loop()
         provider = await node(env, 0, admitted=True)
         procedure = f"{env.org}/too_slow"
+        entered = asyncio.Event()
         finished = asyncio.Event()
 
         async def too_slow(_request):
+            entered.set()
             try:
                 await asyncio.sleep(1.0)
                 return "late"
@@ -346,8 +348,18 @@ class TestServingEdges:
 
         caller = await node(env, 1)
         async with provider, caller, await provider.serve(env.realm_id, procedure, too_slow):
-            with pytest.raises(MaculaTimeoutError):
-                await caller.call(env.realm_id, procedure, {}, timeout_ms=300)
+            # A 300 ms deadline can run out before the first call has found the
+            # provider and dialled it, and then no handler runs at all: call
+            # again until one has been entered.
+            for _ in range(10):
+                with pytest.raises(MaculaTimeoutError):
+                    await caller.call(env.realm_id, procedure, {}, timeout_ms=300)
+                try:
+                    await asyncio.wait_for(entered.wait(), 1)
+                    break
+                except TimeoutError:
+                    continue
+            assert entered.is_set(), "no call reached the handler"
             await asyncio.wait_for(finished.wait(), 5)
             await asyncio.sleep(0.3)
         import gc
