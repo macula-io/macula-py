@@ -112,6 +112,34 @@ class ContentUnavailableError(MaculaError):
         self.failures = failures
 
 
+class ConfidentialityError(MaculaError):
+    """A call, stream or served procedure that could not be kept confidential
+    (macula 13's E2E seal scheme 1; macula-go's cabi/CONTRACT.md
+    "Confidentiality"). ``reason``: ``no_kem_key`` (the provider names no key
+    where one is required, or one this node cannot seal to), ``key_mismatch``
+    (the provider's advertisement names another key than its refusal did:
+    ``named`` and ``found``), ``reply_not_opened`` (a sealed answer that does
+    not open), ``clear_answer_to_sealed`` (a clear answer that nothing clear
+    may give) or ``kem_advertise_disabled`` (serving ``required`` on a pool
+    connected without kem_advertise). ``named`` and ``found`` are key ids as
+    hex, or None."""
+
+    def __init__(self, reason: str, named: str | None, found: str | None, message: str) -> None:
+        super().__init__(f"macula-py: {message}")
+        self.reason = reason
+        self.named = named
+        self.found = found
+
+
+class NotSettledError(MaculaError):
+    """A stream's seal report asked for before it settled, or of a stream
+    that ended before it settled."""
+
+
+class NotACallerError(MaculaError):
+    """A seal report asked of a served stream: only the caller has one."""
+
+
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 
 
@@ -190,8 +218,14 @@ _KINDS: dict[str, type[MaculaError]] = {
     "answered": AlreadyAnsweredError,
     "closed": ClosedError,
     "refused": RefusedError,
+    "not_settled": NotSettledError,
+    "not_a_caller": NotACallerError,
     "failed": MaculaError,
 }
+
+
+def _key_id(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def native_error(text: str) -> Exception:
@@ -212,6 +246,10 @@ def native_error(text: str) -> Exception:
         return RelayError(str(error.get("code") or ""))
     if kind == "unavailable":
         return ContentUnavailableError([str(f) for f in error.get("failures") or []])
+    if kind == "confidentiality":
+        return ConfidentialityError(
+            str(error.get("reason") or ""), _key_id(error.get("named")), _key_id(error.get("found")), message
+        )
     cls = _KINDS.get(kind)
     if cls is None:
         return MaculaError(f"macula-py: the native layer failed with unknown kind {kind!r}: {message}")

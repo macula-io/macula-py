@@ -10,6 +10,7 @@ yields every frame up to StreamEof.
 from __future__ import annotations
 
 import enum
+import json
 from dataclasses import dataclass
 from typing import Any, Union
 
@@ -59,17 +60,40 @@ StreamFrame = Union[StreamData, StreamEnd, StreamReply, StreamEof]
 
 @dataclass(frozen=True)
 class Request:
-    """A served call's or stream session's request."""
+    """A served call's or stream session's request. sealed is True when it
+    came sealed; payload is the opened plaintext either way."""
 
     caller: str
     realm: str
     procedure: str
     payload: Any
     deadline_ms: int
+    sealed: bool
 
 
 def request_from(item: dict) -> Request:
-    return Request(item["caller"], item["realm"], item["procedure"], item.get("payload"), item["deadline_ms"])
+    return Request(item["caller"], item["realm"], item["procedure"], item.get("payload"), item["deadline_ms"],
+                   item["sealed"] == 1)
+
+
+@dataclass(frozen=True)
+class SealReport:
+    """What a caller's seal report says about the exchange behind a result
+    (macula's DESIGN_E2E_SEAL_REPORT): sealed is True when the request was
+    sealed to the provider's advertised KEM key and the answer opened under
+    that key, False when it went in the clear; provider, the node_id it was
+    addressed to, as hex; seal_key_id, the key's 8-byte id as hex, only when
+    sealed. It states that sealing ran on that exchange, nothing more."""
+
+    sealed: bool
+    provider: str
+    seal_key_id: str | None
+
+
+def seal_report(item: dict) -> SealReport:
+    """A report as the ABI carries it: sealed 0 or 1, seal_key_id only when
+    sealed."""
+    return SealReport(item["sealed"] == 1, item["provider"], item.get("seal_key_id"))
 
 
 def _frame(item: dict) -> StreamFrame:
@@ -96,6 +120,16 @@ class Stream:
         self.request = request
         """The request that opened it, on a served session; None on one this
         node opened."""
+
+    def report(self) -> SealReport:
+        """This caller's seal report for the stream (see SealReport). It
+        settles on the provider's first data or reply opened under the
+        stream's key, after which no reseal can happen, or on a clear stream
+        on its first data, reply or end; a stream that settled keeps it after
+        it ends. Before it settles, and on a stream that ended first,
+        NotSettledError; on a served stream, NotACallerError."""
+        n = native()
+        return seal_report(json.loads(n.take_string(n.invoke("macula_stream_report", self._live()))))
 
     async def send(self, chunk: bytes) -> None:
         """Sends chunk as raw bytes."""

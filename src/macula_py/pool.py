@@ -23,7 +23,7 @@ import inspect
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Mapping, Sequence, Union
+from typing import Any, Awaitable, Callable, Literal, Mapping, NamedTuple, Sequence, Union
 
 from macula_py._blocking import run_blocking, run_native
 from macula_py._native import Native, native
@@ -42,7 +42,7 @@ from macula_py._wire import (
     mcid50,
 )
 from macula_py.key import NodeKey
-from macula_py.stream import Request, Stream, StreamMode, request_from
+from macula_py.stream import Request, SealReport, Stream, StreamMode, request_from, seal_report
 from macula_py.ucan import Policy, RealmMemberRequired, UcanRequired
 
 log = logging.getLogger("macula_py")
@@ -134,21 +134,63 @@ class RecordType(enum.IntEnum):
     PROCEDURE_DELEGATION = 0x16
 
 
+class Reported(NamedTuple):
+    """A call's result and its seal report (Pool.call_report)."""
+
+    result: Any
+    report: SealReport
+
+
+Confidential = Literal["preferred", "required"]
+"""Whether a call or a stream is sealed (macula 13's E2E seal scheme 1):
+"preferred" (the default) seals whenever the provider's advertisement names
+a KEM key and calls one that names none in the clear; "required" never calls
+one that names none. A sealed call never falls back to the clear."""
+
+ServedConfidential = Literal["preferred", "required", "off"]
+"""Whether a served procedure is sealed: "preferred" (the default) names this
+node's KEM key when the pool was connected with kem_advertise, and takes a
+clear call only while the procedure's last keyless advertisement could be
+served; "required" refuses every clear call (sealed_required) and needs
+kem_advertise; "off" serves in the clear."""
+
 Handler = Callable[[Request], Union[Any, Awaitable[Any]]]
 StreamHandler = Callable[[Stream], Awaitable[None]]
 
 
-def _presentation(ucan: str | None, proofs: Sequence[str]) -> tuple[bytes | None, bytes | None]:
-    """A token and its chain's proofs as the ABI takes them."""
+def _call_options(
+    provider: Id | None, ucan: str | None, proofs: Sequence[str], confidential: Confidential | None, report: bool
+) -> bytes:
+    """A call's or an open's options as macula_pool_call_opts and
+    macula_pool_open_stream_opts take them. confidential is handed on as
+    given: the native layer refuses "off" and anything unknown."""
     if isinstance(proofs, str):
         raise TypeError("macula-py: proofs is a sequence of tokens, not one token")
-    return (None if ucan is None else ucan.encode()), (json.dumps(list(proofs)).encode() if proofs else None)
+    options: dict[str, Any] = {}
+    if provider is not None:
+        options["provider"] = id32(provider, "provider").hex()
+    if ucan is not None:
+        options["ucan"] = ucan
+    if proofs:
+        options["proofs"] = list(proofs)
+    if confidential is not None:
+        options["confidential"] = confidential
+    if report:
+        options["report"] = 1
+    return json.dumps(options).encode()
 
 
-def _policy_json(policy: Policy) -> bytes:
-    if not isinstance(policy, (UcanRequired, RealmMemberRequired)):
-        raise TypeError("macula-py: a policy is a macula_py.ucan.UcanRequired or RealmMemberRequired")
-    return json.dumps(policy.json()).encode()
+def _serve_options(policy: Policy | None, confidential: ServedConfidential | None) -> bytes:
+    """A served procedure's options as macula_pool_serve_opts and
+    macula_pool_serve_stream_opts take them."""
+    options: dict[str, Any] = {}
+    if policy is not None:
+        if not isinstance(policy, (UcanRequired, RealmMemberRequired)):
+            raise TypeError("macula-py: a policy is a macula_py.ucan.UcanRequired or RealmMemberRequired")
+        options["policy"] = policy.json()
+    if confidential is not None:
+        options["confidential"] = confidential
+    return json.dumps(options).encode()
 
 
 def _flag(value: Any) -> bool | None:
@@ -388,11 +430,20 @@ class Pool:
         max_direct_links: int | None = None,
         respawn_delay_ms: int | None = None,
         timeout_ms: int | None = None,
+        kem_advertise: bool = False,
     ) -> Pool:
         """Links the key's node to every seed, and returns once one link is
         up (timeout_ms, 30 s by default). realm_trust holds each realm's key
         as carried (hex or bytes) by realm id: an advertisement in a realm is
-        trusted only when its authorization verifies against it."""
+        trusted only when its authorization verifies against it.
+
+        kem_advertise (off by default) gives the node a KEM keyring, in
+        memory only, and names its current key in the advertisements of the
+        procedures it serves confidentially, so callers seal to it. Enable it
+        only once every station runs macula 12.11 or later and every caller
+        can seal (macula 13, macula-go 0.18, macula-py 0.4 or later)."""
+        if not isinstance(kem_advertise, bool):
+            raise TypeError("macula-py: kem_advertise is True or False")
         seeds_json = json.dumps(
             [{"host": s.host, "port": s.port, "node_id": id32(s.node_id, "a seed's node_id").hex()} for s in seeds]
         )
@@ -411,6 +462,7 @@ class Pool:
         ):
             if value is not None:
                 options[name] = value
+        options["kem_advertise"] = int(kem_advertise)
         n = native()
         key_handle = key._live()
         handle = await run_blocking(
@@ -462,27 +514,62 @@ class Pool:
         timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS,
         ucan: str | None = None,
         proofs: Sequence[str] = (),
+        confidential: Confidential | None = None,
     ) -> Any:
         """Calls procedure in realm at a provider (any trusted one unless
         provider names one) by direct dial, presenting ucan and the proofs of
-        its chain to a gated procedure (macula_py.ucan). A provider's ERROR is
-        raised as ProviderError (``unauthorized`` for a token it refuses), a
-        station's relay error as RelayError."""
+        its chain to a gated procedure (macula_py.ucan). The call is sealed to
+        the provider's KEM key whenever its advertisement names one
+        (confidential "preferred", the default); "required" never calls a
+        provider that names none. A provider's ERROR is raised as
+        ProviderError (``unauthorized`` for a token it refuses), a station's
+        relay error as RelayError, and a call that could not be kept
+        confidential as ConfidentialityError."""
+        text = await self._call(realm, procedure, payload, provider, timeout_ms, ucan, proofs, confidential, False)
+        return decode_payload(text) if text is not None else None
+
+    async def call_report(
+        self,
+        realm: Id,
+        procedure: str,
+        payload: Any = None,
+        *,
+        provider: Id | None = None,
+        timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS,
+        ucan: str | None = None,
+        proofs: Sequence[str] = (),
+        confidential: Confidential | None = None,
+    ) -> Reported:
+        """call, returning its result with its seal report: whether the
+        exchange behind the result was sealed, to which provider and key
+        (SealReport). After a sealed_refused and one reseal, the report names
+        the reseal's key. An error is raised as call raises it, with no
+        report."""
+        text = await self._call(realm, procedure, payload, provider, timeout_ms, ucan, proofs, confidential, True)
+        reply = decode_payload(text)
+        return Reported(reply["result"], seal_report(reply))
+
+    async def _call(
+        self,
+        realm: Id,
+        procedure: str,
+        payload: Any,
+        provider: Id | None,
+        timeout_ms: int,
+        ucan: str | None,
+        proofs: Sequence[str],
+        confidential: Confidential | None,
+        report: bool,
+    ) -> str | None:
         n = native()
         h, realm32, body = self._live(), id32(realm, "realm"), encode_payload(payload).encode()
-        provider32 = None if provider is None else id32(provider, "provider")
-        if ucan is None and not proofs:
-            invoke = lambda c: n.invoke(  # noqa: E731
-                "macula_pool_call", h, realm32, procedure.encode(), body, provider32, timeout_ms, c
-            )
-        else:
-            token, proofs_json = _presentation(ucan, proofs)
-            invoke = lambda c: n.invoke(  # noqa: E731
-                "macula_pool_call_with", h, realm32, procedure.encode(), body, provider32, token, proofs_json,
-                timeout_ms, c,
-            )
-        text = await run_blocking(lambda c: n.take_string(invoke(c)), n.cancels)
-        return decode_payload(text) if text is not None else None
+        options = _call_options(provider, ucan, proofs, confidential, report)
+        return await run_blocking(
+            lambda c: n.take_string(
+                n.invoke("macula_pool_call_opts", h, realm32, procedure.encode(), body, options, timeout_ms, c)
+            ),
+            n.cancels,
+        )
 
     async def providers(self, realm: Id, procedure: str, *, timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS) -> list[Provider]:
         """The procedure's trusted providers, freshest first."""
@@ -508,23 +595,32 @@ class Pool:
         handle = await run_native(lambda: native().invoke("macula_pool_subscribe", h, realm32, topic.encode()))
         return Subscription(handle)
 
-    async def serve(self, realm: Id, procedure: str, handler: Handler, *, policy: Policy | None = None) -> Served:
+    async def serve(
+        self,
+        realm: Id,
+        procedure: str,
+        handler: Handler,
+        *,
+        policy: Policy | None = None,
+        confidential: ServedConfidential | None = None,
+    ) -> Served:
         """Serves procedure in realm: ``~<own node_id>/<name>`` (own_procedure)
         or ``<org>/<name>`` under an org that delegated it to this node.
         handler(request) returns the result, directly or as an awaitable; an
         exception it raises reaches the caller as a ProviderError of code
         handler_error with the exception's text as its detail. With a policy
         (macula_py.ucan), only calls whose UCAN it accepts reach the handler;
-        the rest are answered unauthorized."""
+        the rest are answered unauthorized.
+
+        confidential (ServedConfidential): "preferred" (the default) names
+        this node's KEM key when the pool was connected with kem_advertise;
+        "required" refuses every clear call and needs kem_advertise (else
+        ConfidentialityError, kem_advertise_disabled); "off" serves in the
+        clear. request.sealed says whether a call came sealed."""
         n = native()
         h, realm32 = self._live(), id32(realm, "realm")
-        if policy is None:
-            handle = await run_native(lambda: n.invoke("macula_pool_serve", h, realm32, procedure.encode()))
-        else:
-            policy_json = _policy_json(policy)
-            handle = await run_native(
-                lambda: n.invoke("macula_pool_serve_gated", h, realm32, procedure.encode(), policy_json)
-            )
+        options = _serve_options(policy, confidential)
+        handle = await run_native(lambda: n.invoke("macula_pool_serve_opts", h, realm32, procedure.encode(), options))
 
         async def dispatch(pending: int, item: dict) -> None:
             await _answer_call(n, pending, request_from(item), handler)
@@ -538,26 +634,27 @@ class Pool:
         return Served(handle, dispatch, release, procedure)
 
     async def serve_stream(
-        self, realm: Id, procedure: str, mode: StreamMode, handler: StreamHandler, *, policy: Policy | None = None
+        self,
+        realm: Id,
+        procedure: str,
+        mode: StreamMode,
+        handler: StreamHandler,
+        *,
+        policy: Policy | None = None,
+        confidential: ServedConfidential | None = None,
     ) -> Served:
         """Serves a streaming procedure: handler(stream) runs per session, with
         the session's request as stream.request. The stream is closed when the
         handler returns, and aborted with handler_error when it raises. With a
         policy (macula_py.ucan), only opens whose UCAN it accepts start a
-        session; the rest are refused with a stream error, unauthorized."""
+        session; the rest are refused with a stream error, unauthorized.
+        confidential as serve's."""
         n = native()
         h, realm32 = self._live(), id32(realm, "realm")
-        if policy is None:
-            handle = await run_native(
-                lambda: n.invoke("macula_pool_serve_stream", h, realm32, procedure.encode(), int(mode))
-            )
-        else:
-            policy_json = _policy_json(policy)
-            handle = await run_native(
-                lambda: n.invoke(
-                    "macula_pool_serve_stream_gated", h, realm32, procedure.encode(), int(mode), policy_json
-                )
-            )
+        options = _serve_options(policy, confidential)
+        handle = await run_native(
+            lambda: n.invoke("macula_pool_serve_stream_opts", h, realm32, procedure.encode(), int(mode), options)
+        )
 
         async def dispatch(stream_handle: int, item: dict) -> None:
             await _run_session(Stream(stream_handle, request_from(item)), handler)
@@ -576,30 +673,24 @@ class Pool:
         timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS,
         ucan: str | None = None,
         proofs: Sequence[str] = (),
+        confidential: Confidential | None = None,
     ) -> Stream:
         """Opens a stream to procedure in realm by direct dial, presenting
         ucan and its chain's proofs to a gated procedure (macula_py.ucan; a
-        refused open is a StreamError from recv). deadline_ms is how far
-        ahead the open's signed deadline lies (30 s when 0), which bounds the
-        provider's admission, not the stream's life; timeout_ms bounds opening
-        it."""
+        refused open is a StreamError from recv), sealed as call is
+        (confidential; a stream that could not be kept confidential is a
+        ConfidentialityError here). deadline_ms is how far ahead the open's
+        signed deadline lies (30 s when 0), which bounds the provider's
+        admission, not the stream's life; timeout_ms bounds opening it. The
+        stream's seal report is stream.report()."""
         n = native()
         h, realm32, body = self._live(), id32(realm, "realm"), encode_payload(payload).encode()
-        provider32 = None if provider is None else id32(provider, "provider")
-        if ucan is None and not proofs:
-            invoke = lambda c: n.invoke(  # noqa: E731
-                "macula_pool_open_stream",
-                h, realm32, procedure.encode(), int(mode), body, provider32, deadline_ms, timeout_ms, c,
-            )
-        else:
-            token, proofs_json = _presentation(ucan, proofs)
-            invoke = lambda c: n.invoke(  # noqa: E731
-                "macula_pool_open_stream_with",
-                h, realm32, procedure.encode(), int(mode), body, provider32, token, proofs_json, deadline_ms,
-                timeout_ms, c,
-            )
+        options = _call_options(provider, ucan, proofs, confidential, False)
         handle = await run_blocking(
-            invoke,
+            lambda c: n.invoke(
+                "macula_pool_open_stream_opts",
+                h, realm32, procedure.encode(), int(mode), body, options, deadline_ms, timeout_ms, c,
+            ),
             n.cancels,
             discard=lambda stream_handle: n.call("macula_stream_free", stream_handle),
         )

@@ -10,10 +10,10 @@ from __future__ import annotations
 
 ABI_VERSION = 1
 # The oldest macula-go release this macula-py supports: its library exports
-# every function below (a new function does not change ABI_VERSION), and it
-# carries at-most-once delivery (macula-go#8, v0.18.1) and the deadline fix
-# (macula-go#12, v0.18.2), which an older library would silently lack.
-LIBRARY_FLOOR = "v0.18.2"
+# every function below (a new function does not change ABI_VERSION): the seal
+# report's macula_stream_report since v0.19.0. It also speaks handshake v5
+# (the channel binding, v0.20.0), which an older library would silently lack.
+LIBRARY_FLOOR = "v0.20.0"
 
 H = "macula_handle"
 ERR = "char**"
@@ -64,7 +64,8 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     "macula_pool_node_id": ("void", [H, "uint8_t*", ERR]),
     "macula_pool_status": ("char*", [H, ERR]),
     "macula_pool_events_next": ("char*", [H, "int64_t", H, "int32_t*", ERR]),
-    # Calls
+    # Calls. The Python API calls, serves and opens through the *_opts functions, whose options carry a UCAN,
+    # its proofs and the confidentiality in one set; the others are declared because the header has them.
     "macula_pool_call": ("char*", [H, REALM, "const char*", "const char*", "const uint8_t*", "int64_t", H, ERR]),
     "macula_pool_call_with": (
         "char*",
@@ -83,8 +84,6 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     "macula_pool_serve_stream": (H, [H, REALM, "const char*", "int32_t", ERR]),
     "macula_pool_serve_gated": (H, [H, REALM, "const char*", "const char*", ERR]),
     "macula_pool_serve_stream_gated": (H, [H, REALM, "const char*", "int32_t", "const char*", ERR]),
-    # Sealing's *_opts functions (libmacula v0.18.0): declared, as the header requires, and not yet used: the Python
-    # API exposes sealing from the release on libmacula v0.19.0.
     "macula_pool_serve_opts": (H, [H, REALM, "const char*", "const char*", ERR]),
     "macula_pool_serve_stream_opts": (H, [H, REALM, "const char*", "int32_t", "const char*", ERR]),
     "macula_served_next": ("char*", [H, "int64_t", H, "macula_handle*", "int32_t*", ERR]),
@@ -106,6 +105,7 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
          "int64_t", "int64_t", H, ERR],
     ),
     "macula_stream_request": ("char*", [H, ERR]),
+    "macula_stream_report": ("char*", [H, ERR]),
     "macula_stream_send_bytes": ("void", [H, "const uint8_t*", "size_t", ERR]),
     "macula_stream_send_json": ("void", [H, "const char*", ERR]),
     "macula_stream_close_send": ("void", [H, ERR]),

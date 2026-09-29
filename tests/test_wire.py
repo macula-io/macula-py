@@ -6,7 +6,10 @@ import json
 import pytest
 
 from macula_py import (
+    ConfidentialityError,
     ContentUnavailableError,
+    NotACallerError,
+    NotSettledError,
     NotSharedError,
     ProviderError,
     RelayError,
@@ -124,6 +127,18 @@ class TestNativeError:
         assert isinstance(e, ContentUnavailableError)
         assert e.failures == ["a: unreachable", "b: wrong hash"]
 
+    def test_confidentiality_carries_reason_and_both_key_ids(self):
+        e = native_error(
+            '{"kind":"confidentiality","message":"m","reason":"key_mismatch",'
+            '"named":"0102030405060708","found":"1112131415161718"}'
+        )
+        assert isinstance(e, ConfidentialityError)
+        assert (e.reason, e.named, e.found) == ("key_mismatch", "0102030405060708", "1112131415161718")
+
+    def test_confidentiality_key_ids_may_be_null_or_absent(self):
+        e = native_error('{"kind":"confidentiality","message":"m","reason":"no_kem_key","named":null}')
+        assert (e.reason, e.named, e.found) == ("no_kem_key", None, None)
+
     def test_timeout_is_a_timeout_error(self):
         e = native_error('{"kind":"timeout","message":"call timed out"}')
         assert isinstance(e, MaculaTimeoutError)
@@ -146,6 +161,8 @@ class TestNativeError:
             ("answered", AlreadyAnsweredError),
             ("closed", ClosedError),
             ("refused", RefusedError),
+            ("not_settled", NotSettledError),
+            ("not_a_caller", NotACallerError),
             ("failed", MaculaError),
         ],
     )
