@@ -10,10 +10,12 @@ from __future__ import annotations
 
 ABI_VERSION = 1
 # The oldest macula-go release this macula-py supports: its library exports
-# every function below (a new function does not change ABI_VERSION): the seal
-# report's macula_stream_report since v0.19.0. It also speaks handshake v5
-# (the channel binding, v0.20.0), which an older library would silently lack.
-LIBRARY_FLOOR = "v0.20.0"
+# every function below (a new function does not change ABI_VERSION):
+# macula_signed_object_verify since v0.22.0. It speaks handshake v5 (the
+# channel binding, v0.20.0) and offers SecP384r1MLKEM1024 alone (v0.23.0,
+# macula-go#20), which an older library would silently lack: it would land on
+# SecP256r1MLKEM768 with every station.
+LIBRARY_FLOOR = "v0.23.0"
 
 H = "macula_handle"
 ERR = "char**"
@@ -58,6 +60,8 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     # UCANs
     "macula_ucan_create": ("char*", [H, "const uint8_t*", "const char*", "int64_t", "const char*", ERR]),
     "macula_ucan_proof_id": ("char*", ["const char*", ERR]),
+    # Signed objects. Declared because the header has it; the Python API does not use it yet.
+    "macula_signed_object_verify": ("char*", ["const char*", "const uint8_t*", "size_t", "const char*", ERR]),
     # Pool
     "macula_pool_connect": (H, [H, "const char*", "const char*", H, ERR]),
     "macula_pool_close": ("void", [H]),

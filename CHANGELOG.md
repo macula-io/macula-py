@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1 (2026-10-06)
+
+On macula-go v0.23.0's C ABI (was v0.20.0). Closes #5.
+
+### Changed
+
+- **Every connection negotiates SecP384r1MLKEM1024** (macula-go#20). Before,
+  this SDK landed on SecP256r1MLKEM768 with every station: Go's crypto/tls
+  ignores the order of the groups it is given and offered SecP256r1MLKEM768
+  first, with the only key share, and a station takes the client's first
+  group. libmacula now offers SecP384r1MLKEM1024 alone, so a station that
+  accepts only SecP256r1MLKEM768 fails in the TLS handshake. Every macula 12
+  station accepts SecP384r1MLKEM1024.
+- The library floor is macula-go v0.23.0: an older library would land on
+  SecP256r1MLKEM768. `abi/macula.h` is v0.23.0's, which adds
+  `macula_signed_object_verify` (macula-go v0.22.0); `_abi` declares it, and
+  the Python API does not use it yet.
+
 ## 0.4.0 (2026-09-29)
 
 On macula-go v0.20.0's C ABI (was v0.18.2): macula 13's end-to-end sealing,
