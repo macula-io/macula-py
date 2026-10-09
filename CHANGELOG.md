@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+On macula-go v0.26.0's C ABI (was v0.23.0).
+
+### Security
+
+- **A UCAN whose issuer did:key is over 4,400 characters is refused at once**
+  (macula#87, macula-go#27). Base58 decodes in time quadratic in its length,
+  ahead of the signature check: on v0.23.0 a gated procedure decoding a
+  300,000-character issuer outlasted a 5 s call. It is now refused
+  `unauthorized` before the handler runs. The library also refuses, at every
+  link of a chain, an `exp` more than ten years past now (macula#68,
+  v0.25.0), and `NodeKey.ucan` will not mint one (v0.24.0).
+- `LIBRARY_FLOOR` is v0.26.0: an older library would silently lack the bound.
+
+### Tests
+
+- The UCAN vectors are macula v14.5.0's `ucan_v1.json` (was 0e2724cc), with
+  `did_key_length`, which a test holds to 4,400.
+
 ## 0.4.1 (2026-10-06)
 
 On macula-go v0.23.0's C ABI (was v0.20.0). Closes #5.

@@ -8,6 +8,7 @@ to end, over two in-process stations, in both profiles."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import time
@@ -20,8 +21,8 @@ from macula_py.ucan import RealmMemberRequired, UcanRequired, key_id, proof_id
 from tests.stations import TestStations
 
 VECTORS = Path(__file__).parent / "fixtures" / "ucan" / "ucan_v1.json"
-# macula's test/vectors/ucan_v1.json at 0e2724cc97a5689542b8da7b06d392cf0d34b205.
-VECTORS_SHA256 = "b64cb27aa639ea7ec103523b808e766c656220610f9a26a7801af31fe7c3b296"
+# macula's test/vectors/ucan_v1.json at v14.5.0 (26e8dca6).
+VECTORS_SHA256 = "530d4960a881df161dca5a8a850829a1d162e0819d59f2faf079b6ab9d7f00bf"
 
 
 def vectors() -> dict:
@@ -207,3 +208,42 @@ def test_key_ids_are_macula_s():
     for name, profile in vectors()["profiles"].items():
         for key in profile["keys"].values():
             assert key_id(_carried(key["did_key"]), name) == bytes.fromhex(key["key_id"]), key["did_key"][:24]
+
+
+def test_the_did_key_length_bound_is_macula_s():
+    """macula#87: the vectors pin the longest did:key text every SDK decodes
+    (did_key_length), and one past it, which is malformed."""
+    bound = vectors()["did_key_length"]
+    assert bound["max_encoded_chars"] == 4400
+    assert bound["verdict"] == "malformed"
+    assert len(bound["over_bound"]) == len("did:key:z") + 4400 + 1
+
+
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+async def test_an_overlong_issuer_did_key_is_refused_at_once(env):
+    """macula#87: a token's issuer did:key is decoded before its signature is
+    checked, in time quadratic in its length. The library refuses one over
+    4,400 characters before decoding (macula-go v0.26.0), so the call is
+    refused unauthorized at once and never reaches the handler."""
+    provider, caller, root, _alice = await gated_world(env)
+    procedure = f"{env.org}/count_long_issuer"
+    entered = []
+    org = f"mri:org:{env.realm_name}/{env.org}"
+    granted = root.ucan(caller.node_id(), [{"with": org, "can": "invoke"}], exp=int(time.time()) + 300)
+    header, claims, signature = granted.split(".")
+    forged = json.loads(base64.urlsafe_b64decode(claims + "=" * (-len(claims) % 4)))
+    forged["iss"] = "did:key:z" + "2" * 300_000
+    token = f"{header}.{_b64(json.dumps(forged).encode())}.{signature}"
+    async with provider, caller, await provider.serve(
+        env.realm_id, procedure, lambda request: entered.append(1) or "served", policy=UcanRequired(root.node_id())
+    ):
+        await until_served(lambda: caller.call(env.realm_id, procedure, {}, ucan=granted))
+        started = time.monotonic()
+        with pytest.raises(ProviderError) as refused:
+            await caller.call(env.realm_id, procedure, {}, ucan=token, timeout_ms=5_000)
+        assert refused.value.code == "unauthorized"
+        assert time.monotonic() - started < 5
+        assert entered == [1], "only the granted call reached the handler"

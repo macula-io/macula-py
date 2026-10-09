@@ -14,8 +14,10 @@ ABI_VERSION = 1
 # macula_signed_object_verify since v0.22.0. It speaks handshake v5 (the
 # channel binding, v0.20.0) and offers SecP384r1MLKEM1024 alone (v0.23.0,
 # macula-go#20), which an older library would silently lack: it would land on
-# SecP256r1MLKEM768 with every station.
-LIBRARY_FLOOR = "v0.23.0"
+# SecP256r1MLKEM768 with every station. It refuses a UCAN whose issuer
+# did:key is over 4,400 characters before decoding it (v0.26.0, macula#87): an
+# older library spends CPU a caller chooses on one.
+LIBRARY_FLOOR = "v0.26.0"
 
 H = "macula_handle"
 ERR = "char**"
