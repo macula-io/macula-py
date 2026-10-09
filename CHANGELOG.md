@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-10-09)
 
 On macula-go v0.26.0's C ABI (was v0.23.0).
 
