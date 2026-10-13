@@ -5,7 +5,7 @@ naming it, and so does an ABI version that is not the header's."""
 import re
 from pathlib import Path
 
-from macula_py._abi import ABI_VERSION, FUNCTIONS
+from macula_py._abi import ABI_VERSION, FUNCTIONS, WIRE_VERSION
 
 HEADER = Path(__file__).parent.parent / "abi" / "macula.h"
 
@@ -63,3 +63,9 @@ def test_the_abi_version_is_the_headers():
     m = re.search(r"#define MACULA_ABI_VERSION (\d+)", HEADER.read_text())
     assert m is not None
     assert ABI_VERSION == int(m[1])
+
+
+def test_the_wire_version_is_the_headers():
+    m = re.search(r'#define MACULA_WIRE_VERSION "([^"]+)"', HEADER.read_text())
+    assert m is not None
+    assert WIRE_VERSION == m[1]

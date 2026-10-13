@@ -9,15 +9,29 @@ c_char_p) so they can be freed with macula_free_string / macula_free_bytes.
 from __future__ import annotations
 
 ABI_VERSION = 1
+# The wire macula.h was written for. The load path compares it with the
+# library's macula_wire_version() and refuses another major (macula.h, cabi's
+# CONTRACT.md), so a macula-py wheel proves which wire it links whatever it is
+# pointed at through MACULA_LIBRARY_PATH.
+WIRE_VERSION = "1.0"
+
+
+def speaks_our_wire(library_wire: str) -> bool:
+    """Whether a library's wire (its macula_wire_version()) is one this
+    macula-py can speak. Every wire 1.x peer shares the frozen core, so only
+    another major is refused: a 1.1 library carries what wire 1.0 promised and
+    reaches this node without an upgrade (macula.h, cabi's CONTRACT.md)."""
+    return library_wire.split(".")[0] == WIRE_VERSION.split(".")[0]
 # The oldest macula-go release this macula-py supports: its library exports
-# every function below (a new function does not change ABI_VERSION):
-# macula_signed_object_verify since v0.22.0. It speaks handshake v5 (the
-# channel binding, v0.20.0) and offers SecP384r1MLKEM1024 alone (v0.23.0,
-# macula-go#20), which an older library would silently lack: it would land on
-# SecP256r1MLKEM768 with every station. It refuses a UCAN whose issuer
-# did:key is over 4,400 characters before decoding it (v0.26.0, macula#87): an
-# older library spends CPU a caller chooses on one.
-LIBRARY_FLOOR = "v0.26.0"
+# every function below (a new function does not change ABI_VERSION) and
+# speaks wire 1.0 alone (v0.27.0, macula-go#30). macula_wire_version and
+# macula_library_version exist since then, so a library from before it fails
+# the declarations above naming this floor. Earlier floors: v0.26.0 refuses a
+# UCAN whose issuer did:key is over 4,400 characters before decoding it
+# (macula#87); v0.23.0 offers SecP384r1MLKEM1024 alone (macula-go#20), which
+# an older library silently lacked, landing on SecP256r1MLKEM768 with every
+# station; macula_signed_object_verify exists since v0.22.0.
+LIBRARY_FLOOR = "v0.27.0-rc.1"
 
 H = "macula_handle"
 ERR = "char**"
@@ -26,6 +40,8 @@ REALM = "const uint8_t*"
 FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     # The library
     "macula_abi_version": ("int32_t", []),
+    "macula_library_version": ("const char*", []),
+    "macula_wire_version": ("const char*", []),
     "macula_free_string": ("void", ["char*"]),
     "macula_free_bytes": ("void", ["uint8_t*"]),
     # Cancellation

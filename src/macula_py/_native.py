@@ -13,7 +13,7 @@ import ctypes
 import threading
 from typing import Any
 
-from macula_py._abi import ABI_VERSION, FUNCTIONS, LIBRARY_FLOOR
+from macula_py._abi import ABI_VERSION, FUNCTIONS, LIBRARY_FLOOR, WIRE_VERSION, speaks_our_wire
 from macula_py._library import library_path
 from macula_py._wire import MaculaError, native_error
 
@@ -57,6 +57,16 @@ class Native:
         if version != ABI_VERSION:
             raise MaculaError(
                 f"macula-py: {path} is macula C ABI {version}, and this macula-py binds ABI {ABI_VERSION}"
+            )
+        # The library owns both strings (macula.h). A library built for another
+        # wire is refused here: it would connect to stations this macula-py's
+        # declarations do not describe.
+        self.release = self.lib.macula_library_version().decode("utf-8", "replace")
+        self.wire = self.lib.macula_wire_version().decode("utf-8", "replace")
+        if not speaks_our_wire(self.wire):
+            raise MaculaError(
+                f"macula-py: {path} is macula-go {self.release}, speaking wire {self.wire}, "
+                f"and this macula-py speaks wire {WIRE_VERSION}"
             )
         self.cancels = _Cancels(self.lib)
 

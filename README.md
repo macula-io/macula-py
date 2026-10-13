@@ -13,11 +13,18 @@
 </p>
 
 <p align="center">
-  <strong>A Python node on the macula 12 mesh, over macula-go's C ABI</strong>
+  <strong>A Python node on the macula mesh, over macula-go's C ABI</strong>
 </p>
 
 ---
 
+> **Wire 1.0, 0.6.0rc1 (a pre-release):** built on macula-go v0.27.0-rc.1, it
+> speaks wire 1.0 (macula 15) and nothing older, so it reaches a wire 1.0
+> station and never the 14.x fleet. A pre-release is not what a plain
+> `pip install macula-py` resolves: 0.5.0, on the macula 12 wire, stays the
+> default until wire 1.0 ships on the fleet. Install the candidate with
+> `pip install --pre macula-py` or `pip install macula-py==0.6.0rc1`.
+>
 > **Status, 2026-09-29:** on the **macula 12** wire: ML-DSA-87 identities (as
 > the ML-DSA-87 + RSA-PSS-4096 composite in `pq_hybrid`, the fleet's profile),
 > ML-KEM hybrid key exchange, signed requests, and since 0.4.0 handshake v5

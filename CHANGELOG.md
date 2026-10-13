@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0rc1 (2026-10-13)
+
+On macula-go v0.27.0-rc.1's C ABI (was v0.26.0). A pre-release: it speaks
+wire 1.0 and nothing older, so a plain `pip install macula-py` keeps
+resolving 0.5.0, on the macula 12 wire, until wire 1.0 ships on the fleet.
+
+### Changed
+
+- **Wire 1.0** (macula#83, macula-go#30). The library speaks wire 1.0
+  (macula 15) alone, so this pre-release reaches a wire 1.0 station and
+  never the 14.x fleet. macula-go v0.27.0-rc.1's C ABI adds
+  `macula_library_version` and `macula_wire_version`; `_abi` declares both,
+  and `LIBRARY_FLOOR` is v0.27.0-rc.1, so a library from before it fails
+  the declarations naming the floor instead of linking silently.
+  `abi/macula.h` is v0.27.0-rc.1's.
+- **A library speaking another wire is refused at load** (macula.h's
+  `MACULA_WIRE_VERSION`; cabi's CONTRACT.md). `Native` reads
+  `macula_wire_version()` and fails naming the library's release and wire
+  when its major is another (`_abi.speaks_our_wire`: every wire 1.x peer
+  shares the frozen core, so a 1.1 library reaches this node without an
+  upgrade), so the wheel proves which wire it links even when
+  `MACULA_LIBRARY_PATH` points it at someone else's library. `_abi.WIRE_VERSION`
+  is the header's, which `tests/test_abi_declarations.py` holds it to.
+- The project summary no longer names a wire (the `description` in
+  `pyproject.toml`, and the README's tagline), as macula-ts's does not: a
+  0.6.0rc1 wheel's metadata would otherwise claim the macula 12 mesh this
+  pre-release does not speak.
+
 ## 0.5.0 (2026-10-09)
 
 On macula-go v0.26.0's C ABI (was v0.23.0).
