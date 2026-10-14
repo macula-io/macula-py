@@ -22,7 +22,7 @@ import enum
 import inspect
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal, Mapping, NamedTuple, Sequence, Union
 
 from macula_py._blocking import run_blocking, run_native
@@ -98,7 +98,9 @@ class Group:
     ``~<node_id>`` group."""
 
     prefix: str
-    ucan: str | None = None
+    # Not in the repr: a traceback or a log line would otherwise print the
+    # org's grant.
+    ucan: str | None = field(default=None, repr=False)
     distributor: Id | None = None
 
 
@@ -680,6 +682,10 @@ class Pool:
                 "macula_pool_subscribe_group", h, realm32, topic.encode(), options, timeout_ms, c
             ),
             n.cancels,
+            # A join that landed as the caller was cancelled: its subscription
+            # is live on the station, opening the group's events into an inbox
+            # nobody reads, under a subscribe the app believes failed.
+            discard=lambda sub: n.call("macula_subscription_stop", sub),
         )
         return Subscription(handle)
 

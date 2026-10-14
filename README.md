@@ -207,7 +207,8 @@ print(event.seal_key_id)  # the epoch it opened under, 8 bytes as hex
 - `Event.sealed` and `Event.seal_key_id` name the epoch a member's event was
   opened under. One that cannot be opened arrives once with `payload` None and
   `Event.unopened` naming why; a plain `subscribe` under a group prefix hears
-  every event as `no_group`.
+  every event as `no_group`. An event whose payload is genuinely null also
+  reads as `payload` None, so `unopened` is what tells the two apart.
 - A refusal, or a publication that cannot be sealed, raises `GroupError`. Its
   `reason` is one of macula's closed set (`not_a_member`, `membership_unknown`,
   `unknown_epoch`, `epoch_expired`, `no_distributor`, `no_group`,

@@ -8,6 +8,7 @@ import pytest
 from macula_py import (
     ConfidentialityError,
     ContentUnavailableError,
+    GroupError,
     NotACallerError,
     NotSettledError,
     NotSharedError,
@@ -138,6 +139,15 @@ class TestNativeError:
     def test_confidentiality_key_ids_may_be_null_or_absent(self):
         e = native_error('{"kind":"confidentiality","message":"m","reason":"no_kem_key","named":null}')
         assert (e.reason, e.named, e.found) == ("no_kem_key", None, None)
+
+    def test_group_carries_reason_and_prefix(self):
+        e = native_error('{"kind":"group","message":"m","reason":"group_held","prefix":"io.macula/acme/chat"}')
+        assert isinstance(e, GroupError)
+        assert (e.reason, e.prefix) == ("group_held", "io.macula/acme/chat")
+
+    def test_group_prefix_may_be_null_or_absent(self):
+        e = native_error('{"kind":"group","message":"m","reason":"not_a_member"}')
+        assert (e.reason, e.prefix) == ("not_a_member", None)
 
     def test_timeout_is_a_timeout_error(self):
         e = native_error('{"kind":"timeout","message":"call timed out"}')

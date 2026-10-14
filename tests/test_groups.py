@@ -413,6 +413,59 @@ async def test_each_of_the_vectors_grant_cases_reaches_its_verdict(env):
     assert all(distributor.sealed)
 
 
+async def test_a_grant_macula_refuses_does_not_join_at_publish_or_subscribe(env):
+    """The six cases above are pulled through ``call``, which stands in for the
+    join. This is the same verdict at the API an app calls: after the
+    distributor has answered with a grant of its own (so what refuses next is
+    the token, not the DHT's reach), an expired one leaves the group unjoined,
+    and both publish_group and subscribe_group raise rather than publish clear
+    or hand back an inbox nothing opens. What the reason reads as is
+    macula-go's (a gated refusal reaches it as the same no_distributor a
+    missing distributor gives), so this holds the raise, not the reason."""
+    root = await NodeKey.generate(env.profile)
+    prefix = group_prefix(env, "refused_grant")
+    topic = f"{prefix}/said_v1"
+    # A key of the test's own stands in for the org: the harness's org key is
+    # not this test's to sign with, which is what leaves it free to mint a
+    # token that has already expired.
+    policy = RealmMemberRequired(key_id(root.public_key(), env.profile), "group_keys")
+    standin = await node(env, 0, admitted=True, kem_advertise=True)
+    distributor = Distributor(standin, prefix, policy, serves=[epoch_at(0, issued_at=now_ms() - 1_000)])
+    async with standin, await distributor.served(env):
+        member = await node(env, 0)
+        async with member:
+            capability = {"with": f"mri:org:{env.realm_name}/{env.org}", "can": "group_keys"}
+            now = int(time.time())
+            admitted = root.ucan(member.node_id(), [capability], exp=now + 300)
+            await until_served(
+                lambda: member.call(
+                    env.realm_id, f"{env.org}/group_keys_v1", {"prefix": prefix, "epoch": "current"},
+                    ucan=admitted, confidential="required",
+                )
+            )
+            expired = Group(prefix, root.ucan(member.node_id(), [capability], exp=now - 60))
+            with pytest.raises(GroupError) as published:
+                await member.publish_group(env.realm_id, topic, {"said": "clear"}, expired, timeout_ms=5_000)
+            # The gate's own code, which a dial failure or a dead distributor
+            # does not carry: the same reason covers all three, so the message
+            # is what says the token was judged.
+            assert "unauthorized" in str(published.value), published.value
+            with pytest.raises(GroupError) as subscribed:
+                await member.subscribe_group(env.realm_id, topic, expired, timeout_ms=5_000)
+            assert "unauthorized" in str(subscribed.value), subscribed.value
+            # The distributor was alive at the verdict: the refused node's pull
+            # never reached its handler, and a member with a grant of its own
+            # joins the same group right after.
+            assert distributor.seen == [{"prefix": prefix, "epoch": "current"}]
+            late = await node(env, 0)
+            async with late:
+                granted = Group(prefix, root.ucan(late.node_id(), [capability], exp=int(time.time()) + 300))
+                async with await until_joined(
+                    lambda: late.subscribe_group(env.realm_id, topic, granted)
+                ):
+                    pass
+
+
 async def test_a_node_the_distributor_removed_is_refused(env):
     """A distributor may refuse a pull for a node it does not hold as a member
     (macula's not_a_member), and a member reads it by that name: the refusal
