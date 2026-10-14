@@ -186,7 +186,7 @@ contract.
 A realm group is a topic prefix whose second segment is the org that owns it
 (`<realm_name>/<org>/<name>`). The org's distributor serves the group's epoch
 keys at `<org>/group_keys_v1`; a member pulls them over a sealed call,
-presenting the org's grant (a UCAN whose `can` is `group_keys`), and every
+presenting the org's grant (a UCAN whose `can` is `group_keys`), and a member's
 publication under the prefix is sealed to the epoch it then holds.
 
 ```python
@@ -204,11 +204,19 @@ print(event.seal_key_id)  # the epoch it opened under, 8 bytes as hex
 
 - Each call joins the group first, pulling its epoch from the distributor over
   a sealed call, so each takes a timeout like a call.
+- **A clear event under the prefix is not refused for you.** The library
+  refuses one only under a group whose *own* policy is `required`, and the
+  distributor sets that policy, not the subscriber; under any other policy a
+  clear event any realm member published under the prefix arrives as it is,
+  with `Event.sealed` false and a payload. An app that wants sealed events
+  alone checks `Event.sealed`; nothing in the binding can decide that for it.
 - `Event.sealed` and `Event.seal_key_id` name the epoch a member's event was
-  opened under. One that cannot be opened arrives once with `payload` None and
-  `Event.unopened` naming why; a plain `subscribe` under a group prefix hears
-  every event as `no_group`. An event whose payload is genuinely null also
-  reads as `payload` None, so `unopened` is what tells the two apart.
+  opened under, and an event that arrived sealed but could not be opened still
+  carries `Event.seal_key_id`. One that cannot be opened arrives once with
+  `payload` None and `Event.unopened` naming why; a plain `subscribe` under a
+  group prefix hears every event as `no_group`. An event whose payload is
+  genuinely null also reads as `payload` None, so `unopened` is what tells the
+  two apart.
 - A refusal, or a publication that cannot be sealed, raises `GroupError`. Its
   `reason` is one of macula's closed set (`not_a_member`, `membership_unknown`,
   `unknown_epoch`, `epoch_expired`, `no_distributor`, `no_group`,

@@ -109,12 +109,18 @@ class Event:
     """An event a subscription heard, verified.
 
     ``sealed`` is set when the event arrived sealed, which a group
-    subscription opens: it then also carries the epoch's ``seal_key_id``. An
-    event that could not be opened arrives once with ``payload`` None and
-    ``unopened`` naming why (macula's closed set: not_a_member,
-    membership_unknown, unknown_epoch, epoch_expired, no_distributor,
-    no_group, tag_invalid), and one a plain subscription hears under a group
-    is always unopened, as no_group."""
+    subscription opens: it then also carries the epoch's ``seal_key_id``,
+    named whether or not it opened. A *clear* event under a group's prefix is
+    not refused for you: the library refuses one only under a group whose own
+    policy is ``required``, which the distributor sets and not the subscriber,
+    so under any other policy a clear event any realm member published under
+    the prefix arrives here with ``sealed`` false and a payload. An app that
+    wants sealed events alone checks ``sealed``. An event that arrived sealed
+    and could not be opened arrives once with ``payload`` None and ``unopened``
+    naming why (macula's closed set: not_a_member, membership_unknown,
+    unknown_epoch, epoch_expired, no_distributor, no_group, tag_invalid), and
+    one a plain subscription hears under a group is always unopened, as
+    no_group."""
 
     publisher: str
     realm: str
@@ -668,12 +674,15 @@ class Pool:
     async def subscribe_group(
         self, realm: Id, topic: str, group: Group, *, timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS
     ) -> Subscription:
-        """Subscribes to topic in realm as a member of group: each event under
-        the group is opened, and one that cannot be arrives once with its
-        payload None and Event.unopened naming why. The group is joined first,
-        pulling its epoch from the org's distributor over a sealed call; a join
-        that stays held keeps refusing clear publishes under the prefix
-        (GroupError, reason group_held) even when this subscribe then fails."""
+        """Subscribes to topic in realm as a member of group: every event the
+        group seals is opened, and one that cannot be opened arrives once with
+        its payload None and Event.unopened naming why. A clear event under the
+        prefix is not refused for you, only for a group whose own policy is
+        required, so an app that wants sealed events alone checks
+        Event.sealed. The group is joined first, pulling its epoch from the
+        org's distributor over a sealed call; a join that stays held keeps
+        refusing clear publishes under the prefix (GroupError, reason
+        group_held) even when this subscribe then fails."""
         n = native()
         h, realm32 = self._live(), id32(realm, "realm")
         options = _group_options(group)

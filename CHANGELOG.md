@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Documentation only, of what already shipped in 0.6.0rc2. The group docs said a
+member's subscription "opens every event under the group", which is not what
+the library does or can do: a *clear* event under the group's prefix is refused
+only under a group whose own policy is `required`, which the distributor sets
+and not the subscriber, so under any other policy any realm member's clear
+event arrives with `Event.sealed` false. `Pool.subscribe_group`'s docstring,
+`Event`'s docstring and the README's sealed-group section now say so, and that
+an app wanting sealed events alone checks `Event.sealed`. No code changed, and
+no version was released for this.
+
 ## 0.6.0rc2 (2026-10-14)
 
 On macula-go v0.27.0-rc.3's C ABI (was v0.27.0-rc.1): sealed group pub/sub, the
@@ -14,9 +26,9 @@ member's side. Still a pre-release, and still wire 1.0 alone.
   sealed, and `Pool.subscribe_group(realm, topic, group)` subscribes as a
   member. Each joins the group first, pulling its epoch from the org's
   distributor over a sealed call with the org's `group_keys` grant, so each
-  takes a timeout like a call. A member's subscription opens every event
-  under the group: `Event.sealed` and `Event.seal_key_id` name the epoch it
-  opened under, and one that cannot be opened arrives once with `payload`
+  takes a timeout like a call. A member's subscription opens every event the
+  group seals: `Event.sealed` and `Event.seal_key_id` name the epoch it
+  arrived under, and one that cannot be opened arrives once with `payload`
   None and `Event.unopened` naming why. A refusal, or a publication that
   cannot be sealed, raises `GroupError`: its `reason` is one of macula's
   closed set, and `group_held` (a clear publish under a prefix this node
