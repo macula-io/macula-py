@@ -26,12 +26,16 @@ def speaks_our_wire(library_wire: str) -> bool:
 # every function below (a new function does not change ABI_VERSION) and
 # speaks wire 1.0 alone (v0.27.0, macula-go#30). macula_wire_version and
 # macula_library_version exist since then, so a library from before it fails
-# the declarations above naming this floor. Earlier floors: v0.26.0 refuses a
-# UCAN whose issuer did:key is over 4,400 characters before decoding it
-# (macula#87); v0.23.0 offers SecP384r1MLKEM1024 alone (macula-go#20), which
-# an older library silently lacked, landing on SecP256r1MLKEM768 with every
-# station; macula_signed_object_verify exists since v0.22.0.
-LIBRARY_FLOOR = "v0.27.0-rc.1"
+# the declarations above naming this floor. Earlier floors: v0.27.0-rc.1,
+# which speaks wire 1.0 but has no group call, so macula_pool_publish_group
+# and macula_pool_subscribe_group fail the declarations naming it, as they
+# must: a library from before it cannot seal a group's publication at all
+# (macula-go#34). v0.26.0 refuses a UCAN whose issuer did:key is over 4,400
+# characters before decoding it (macula#87); v0.23.0 offers
+# SecP384r1MLKEM1024 alone (macula-go#20), which an older library silently
+# lacked, landing on SecP256r1MLKEM768 with every station;
+# macula_signed_object_verify exists since v0.22.0.
+LIBRARY_FLOOR = "v0.27.0-rc.3"
 
 H = "macula_handle"
 ERR = "char**"
@@ -98,6 +102,13 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     # Publish / subscribe
     "macula_pool_publish": ("void", [H, REALM, "const char*", "const char*", "int64_t", ERR]),
     "macula_pool_subscribe": (H, [H, REALM, "const char*", ERR]),
+    # Sealed groups: each joins the group first, pulling its epoch from the
+    # org's distributor, so each takes a timeout and a cancel token like a call.
+    "macula_pool_publish_group": (
+        "void",
+        [H, REALM, "const char*", "const char*", "const char*", "int64_t", "int64_t", H, ERR],
+    ),
+    "macula_pool_subscribe_group": (H, [H, REALM, "const char*", "const char*", "int64_t", H, ERR]),
     "macula_subscription_next": ("char*", [H, "int64_t", H, "int32_t*", ERR]),
     "macula_subscription_dropped": ("uint64_t", [H, ERR]),
     "macula_subscription_stop": ("void", [H]),

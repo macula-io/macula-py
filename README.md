@@ -19,12 +19,15 @@
 
 ---
 
-> **Wire 1.0, 0.6.0rc1 (a pre-release):** built on macula-go v0.27.0-rc.1, it
+> **Wire 1.0, 0.6.0rc2 (a pre-release):** built on macula-go v0.27.0-rc.3, it
 > speaks wire 1.0 (macula 15) and nothing older, so it reaches a wire 1.0
-> station and never the 14.x fleet. A pre-release is not what a plain
-> `pip install macula-py` resolves: 0.5.0, on the macula 12 wire, stays the
-> default until wire 1.0 ships on the fleet. Install the candidate with
-> `pip install --pre macula-py` or `pip install macula-py==0.6.0rc1`.
+> station and never the 14.x fleet. This candidate adds sealed group pub/sub,
+> the member's side: a Python node joins a realm group, pulling its epoch keys
+> from the org's distributor over a sealed call with the org's grant, and
+> publishes and reads the group's sealed events. A pre-release is not what a
+> plain `pip install macula-py` resolves: 0.5.0, on the macula 12 wire, stays
+> the default until wire 1.0 ships on the fleet. Install the candidate with
+> `pip install --pre macula-py` or `pip install macula-py==0.6.0rc2`.
 >
 > **Status, 2026-09-29:** on the **macula 12** wire: ML-DSA-87 identities (as
 > the ML-DSA-87 + RSA-PSS-4096 composite in `pq_hybrid`, the fleet's profile),
@@ -104,7 +107,7 @@ namespace (`~<node_id>/<name>`, see `Pool.own_procedure`) need none.
 | calls | `call`, `call_report`, `providers`; `call(..., ucan=, proofs=)` presents a UCAN, `confidential=` seals it |
 | serving | `serve(realm, procedure, handler, policy=None, confidential=None)`: handler(request) returns the result, directly or as an awaitable; an exception reaches the caller as a `ProviderError` of code `handler_error` |
 | streams | `open_stream`, `serve_stream`; a `Stream` has `send`, `send_value`, `close_send`, `reply`, `abort`, `close`, `recv`, `report`, and iterates its frames |
-| pub/sub | `publish`, `subscribe`; a `Subscription` iterates its events, or `next(timeout_ms)` |
+| pub/sub | `publish`, `subscribe`, and `publish_group`, `subscribe_group` for a sealed group (below); a `Subscription` iterates its events, or `next(timeout_ms)` |
 | content | `share_content`, `unshare_content`, `get_content` |
 | DHT | `find_record`, `find_records`, `find_records_by_type`, `put_record` |
 
@@ -178,6 +181,44 @@ Content (`share_content`) is public by design and travels in the clear.
 macula-go's `cabi/CONTRACT.md` ("Confidentiality", "The seal report") is the
 contract.
 
+### Sealed groups
+
+A realm group is a topic prefix whose second segment is the org that owns it
+(`<realm_name>/<org>/<name>`). The org's distributor serves the group's epoch
+keys at `<org>/group_keys_v1`; a member pulls them over a sealed call,
+presenting the org's grant (a UCAN whose `can` is `group_keys`), and every
+publication under the prefix is sealed to the epoch it then holds.
+
+```python
+from macula_py import Group
+
+group = Group("io.macula/acme/chat", ucan=org_grant)
+
+await publisher.publish_group(REALM, "io.macula/acme/chat/said_v1", "hello", group)
+subscription = await reader.subscribe_group(REALM, "io.macula/acme/chat/said_v1", group)
+
+event = await subscription.next()
+assert event.sealed and event.payload == "hello"
+print(event.seal_key_id)  # the epoch it opened under, 8 bytes as hex
+```
+
+- Each call joins the group first, pulling its epoch from the distributor over
+  a sealed call, so each takes a timeout like a call.
+- `Event.sealed` and `Event.seal_key_id` name the epoch a member's event was
+  opened under. One that cannot be opened arrives once with `payload` None and
+  `Event.unopened` naming why; a plain `subscribe` under a group prefix hears
+  every event as `no_group`.
+- A refusal, or a publication that cannot be sealed, raises `GroupError`. Its
+  `reason` is one of macula's closed set (`not_a_member`, `membership_unknown`,
+  `unknown_epoch`, `epoch_expired`, `no_distributor`, `no_group`,
+  `tag_invalid`), and `group_held`, a clear publish under a prefix this node
+  holds a key for, also names the group's `prefix`.
+- `distributor=` names the node that must be the group's, required for a
+  `~<node_id>` group; a prefix with no second segment, or a `group` that is
+  not a `macula_py.Group`, is refused before it leaves.
+- Serving group keys is the org's, not this SDK's: macula's own
+  `macula_group_keys`, or yours.
+
 ### Proofs for a realm and for a service
 
 `NodeKey.device_request_proof(realm, procedure, request, rule)` signs a
@@ -206,8 +247,8 @@ end.
 Errors are typed: `ProviderError`, `RelayError`, `StreamError`,
 `NotSharedError`, `ContentUnavailableError`, `NoProviderError`, `MaculaTimeoutError` (also a
 `TimeoutError`), `InvalidArgumentError` (also a `ValueError`),
-`ClosedError`, `RefusedError`, `ConfidentialityError`, `NotSettledError`,
-`NotACallerError`, all `MaculaError`.
+`ClosedError`, `RefusedError`, `ConfidentialityError`, `GroupError`,
+`NotSettledError`, `NotACallerError`, all `MaculaError`.
 
 ## Development
 
@@ -235,7 +276,9 @@ check proofs this binding signs against the verifiers themselves: mcl_om's
 provider receives it, and the realm's. `scripts/interop/v5.sh` and
 `scripts/interop/sealed.sh` run handshake v5 against a macula station, and
 sealed calls and streams with their seal reports both ways against a macula
-node. See `scripts/interop/README.md`.
+node, and `scripts/interop/groups.sh` sealed groups both ways against macula's
+own distributor, an Erlang member and a Python member each opening the other's
+sealed event under one epoch. See `scripts/interop/README.md`.
 
 A `v*` tag publishes to PyPI through Trusted Publishing, using only
 macula-go's released libraries, each checked against the release's

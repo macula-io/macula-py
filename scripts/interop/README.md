@@ -65,6 +65,38 @@ clear and must be refused `sealed_required`. Every seal report, the Python
 caller's and the Erlang caller's, must say sealed, the provider called and a
 key id. `PYTHON` names the interpreter to run the Python side with.
 
+## Sealed groups, against macula
+
+```sh
+eval "$(scripts/build_native.sh)"          # libmacula, MACULA_TESTSTATION and build/macula-go
+MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh [pq_hybrid|pq_pure]
+```
+
+`groups.sh` runs through macula-go's teststation, with macula's own
+distributor (`macula_group_keys`, policy `required`) for the test realm's org
+in Erlang, admitted by the org's delegation. An Erlang member (macula-go's
+`erlang_groups.escript member`) and a Python member (`pygroups.py member`)
+each get the org's `group_keys` grant from the test station (`grant
+<node_id>`), subscribe under the group, pulling its epoch from the distributor
+over a sealed call, and publish sealed under it; each must open the other's
+event, under one epoch. Then a Python node the distributor's removed set names
+must be refused `not_a_member`. The Erlang escript's counterpart seat is the
+one it names "go" (its barrier file `ready.go` and the text it waits for), so
+the Python member takes that seat as it stands and macula's side needs no
+change. `MACULA_BUILD` may be a rebar3 project that depends on macula from
+hex, as for `sealed.sh`. `PYTHON` names the interpreter to run the Python side
+with.
+
+## Last run, 0.6.0rc2 (2026-10-14)
+
+- `groups.sh`, both profiles, against macula 15.0.0-rc.2 from hex (compiled on
+  OTP 28.4.3) with macula-go v0.27.0-rc.3's escript and teststation in
+  `ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39b...82ac70`: PASS. The Erlang
+  and the Python member each opened the other's sealed event under one epoch,
+  and the removed node's subscribe was refused `not_a_member`, exit 0.
+- The unit suite (`tests/`), both profiles, against macula-go v0.27.0-rc.3's
+  released `libmacula-linux-x64.so` with its `SHA256SUMS` verified: PASS.
+
 ## Last run, 0.4.0 (2026-09-29)
 
 - `v5.sh` and `sealed.sh`, both profiles, against macula 13.2.2 from hex

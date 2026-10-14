@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.6.0rc2 (2026-10-14)
+
+On macula-go v0.27.0-rc.3's C ABI (was v0.27.0-rc.1): sealed group pub/sub, the
+member's side. Still a pre-release, and still wire 1.0 alone.
+
+### Added
+
+- **Sealed group pub/sub** (macula 13.2's sealed groups, macula-go#34).
+  `Group(prefix, ucan=None, distributor=None)` names a realm group, a topic
+  prefix whose second segment is the org whose distributor serves it;
+  `Pool.publish_group(realm, topic, payload, group)` publishes under it
+  sealed, and `Pool.subscribe_group(realm, topic, group)` subscribes as a
+  member. Each joins the group first, pulling its epoch from the org's
+  distributor over a sealed call with the org's `group_keys` grant, so each
+  takes a timeout like a call. A member's subscription opens every event
+  under the group: `Event.sealed` and `Event.seal_key_id` name the epoch it
+  opened under, and one that cannot be opened arrives once with `payload`
+  None and `Event.unopened` naming why. A refusal, or a publication that
+  cannot be sealed, raises `GroupError`: its `reason` is one of macula's
+  closed set, and `group_held` (a clear publish under a prefix this node
+  holds a key for) also names the group's `prefix`.
+- `scripts/interop/groups.sh`: sealed groups both ways against a compiled
+  macula 15, macula's own distributor and an Erlang member each opening the
+  other's sealed event under one epoch, and a Python node the distributor
+  removed refused `not_a_member`.
+
+### Changed
+
+- The library floor is macula-go v0.27.0-rc.3. The rc.1 library speaks wire
+  1.0 but has no group call at all, so `macula_pool_publish_group` and
+  `macula_pool_subscribe_group` now fail the declarations naming the floor
+  instead of linking a release that cannot seal a group's publication.
+  `abi/macula.h` is v0.27.0-rc.3's.
+
+### Tests
+
+- **The group-key vectors (E2E_SEAL_V1, package 5), as values.** The C ABI
+  hands values and never CBOR, so the vectors are held where they cross:
+  the epoch's id and key through the event's `seal_key_id` and the payload
+  that opens under them, a pull's CALL field for field, and each of the six
+  `realm_member_required` cases against a live gated distributor, where the
+  org's grant is accepted and an impostor refused. Byte-for-byte vector
+  replay and the cases' named refusals stay macula-go's own
+  (`group/vectors_test.go`), as they are PHP's.
+- The tests are run against the released rc.3 asset, SHA256SUMS verified,
+  never a locally built library.
+
 ## 0.6.0rc1 (2026-10-13)
 
 On macula-go v0.27.0-rc.1's C ABI (was v0.26.0). A pre-release: it speaks

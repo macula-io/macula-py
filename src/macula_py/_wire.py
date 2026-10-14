@@ -131,6 +131,19 @@ class ConfidentialityError(MaculaError):
         self.found = found
 
 
+class GroupError(MaculaError):
+    """A sealed group's refusal or failure. ``reason`` is one from macula's
+    closed set: ``not_a_member``, ``membership_unknown``, ``unknown_epoch``,
+    ``epoch_expired``, ``no_distributor``, ``no_group`` or ``tag_invalid``, and
+    ``group_held`` for a clear publish under a prefix this node holds a key
+    for, which also names the group's ``prefix`` (else None)."""
+
+    def __init__(self, reason: str, prefix: str | None, message: str) -> None:
+        super().__init__(f"macula-py: {message}")
+        self.reason = reason
+        self.prefix = prefix
+
+
 class NotSettledError(MaculaError):
     """A stream's seal report asked for before it settled, or of a stream
     that ended before it settled."""
@@ -224,7 +237,9 @@ _KINDS: dict[str, type[MaculaError]] = {
 }
 
 
-def _key_id(value: object) -> str | None:
+def _text(value: object) -> str | None:
+    """A field that is a string when the native layer carries it, else None:
+    a key id, a named or found key, a group's prefix."""
     return value if isinstance(value, str) else None
 
 
@@ -248,8 +263,10 @@ def native_error(text: str) -> Exception:
         return ContentUnavailableError([str(f) for f in error.get("failures") or []])
     if kind == "confidentiality":
         return ConfidentialityError(
-            str(error.get("reason") or ""), _key_id(error.get("named")), _key_id(error.get("found")), message
+            str(error.get("reason") or ""), _text(error.get("named")), _text(error.get("found")), message
         )
+    if kind == "group":
+        return GroupError(str(error.get("reason") or ""), _text(error.get("prefix")), message)
     cls = _KINDS.get(kind)
     if cls is None:
         return MaculaError(f"macula-py: the native layer failed with unknown kind {kind!r}: {message}")

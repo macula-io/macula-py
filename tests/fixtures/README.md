@@ -28,3 +28,17 @@ Pinned by sha256 in `tests/test_proofs.py` and `tests/test_ucan.py`.
 - `ucan/ucan_v1.json`: macula's UCAN vectors, `test/vectors/ucan_v1.json` at
   `0e2724cc97a5689542b8da7b06d392cf0d34b205` (`UCAN_V1.md` beside it there is
   the contract).
+
+# Sealed group vectors
+
+Pinned by sha256 in `tests/test_groups.py`.
+
+- `groups/e2e_seal_v1_group_keys.json`: macula's sealed-group vectors,
+  `test/vectors/e2e_seal_v1_group_keys.json` at `v15.0.0-rc.2`
+  (`42b602698d207c3396e126f3b6343cf4de05232f`; `E2E_SEAL_V1.md`, its "Sealed
+  groups (package 5)" section, is the contract). The epoch's 8-byte id and
+  32-byte key, the reply's shape, the refusals, and the six org-grant UCAN
+  cases. macula-go holds the vectors' CBOR byte for byte
+  (`group/vectors_test.go`); this binding never touches CBOR, so it reaches
+  the epoch's bytes, every field of a pull's payloads, and which grants the
+  gate admits — `tests/test_groups.py` says which, and why.

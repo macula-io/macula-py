@@ -8,10 +8,10 @@ name: Release to PyPI
 # both that tag's source and its released linux-x64 library, and all five
 # wheels built.
 #
-# A pre-release version (0.6.0rc1, a PEP 440 pre-release) uploads as a PyPI
+# A pre-release version (0.6.0rc2, a PEP 440 pre-release) uploads as a PyPI
 # pre-release, which a plain `pip install macula-py` does not resolve: the
 # last plain release stays what a default install gets. The tag names the
-# version as pyproject spells it, so that one is v0.6.0rc1.
+# version as pyproject spells it, so that one is v0.6.0rc2.
 
 on:
   push:

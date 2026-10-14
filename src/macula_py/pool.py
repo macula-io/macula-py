@@ -89,8 +89,30 @@ class Provider:
 
 
 @dataclass(frozen=True)
+class Group:
+    """A sealed group: a topic prefix whose second segment is its org
+    (DESIGN_E2E_SEALED_PUBSUB.md). Its members pull the group's epoch keys
+    from the org's distributor over a sealed call, presenting the org's grant
+    ``ucan`` (a UCAN with ``can`` ``group_keys``, macula_py.ucan).
+    ``distributor`` names the node that must be the group's, required for a
+    ``~<node_id>`` group."""
+
+    prefix: str
+    ucan: str | None = None
+    distributor: Id | None = None
+
+
+@dataclass(frozen=True)
 class Event:
-    """An event a subscription heard, verified."""
+    """An event a subscription heard, verified.
+
+    ``sealed`` is set when the event arrived sealed, which a group
+    subscription opens: it then also carries the epoch's ``seal_key_id``. An
+    event that could not be opened arrives once with ``payload`` None and
+    ``unopened`` naming why (macula's closed set: not_a_member,
+    membership_unknown, unknown_epoch, epoch_expired, no_distributor,
+    no_group, tag_invalid), and one a plain subscription hears under a group
+    is always unopened, as no_group."""
 
     publisher: str
     realm: str
@@ -99,6 +121,9 @@ class Event:
     published_at: int
     payload: Any
     delivered_via: str
+    sealed: bool = False
+    seal_key_id: str | None = None
+    unopened: str | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +205,20 @@ def _call_options(
     return json.dumps(options).encode()
 
 
+def _group_options(group: Group) -> bytes:
+    """A group's options as macula_pool_publish_group and
+    macula_pool_subscribe_group take them. The distributor is handed on as
+    hex, the header's form."""
+    if not isinstance(group, Group):
+        raise TypeError("macula-py: a group is a macula_py.Group")
+    options: dict[str, Any] = {"prefix": group.prefix}
+    if group.ucan is not None:
+        options["ucan"] = group.ucan
+    if group.distributor is not None:
+        options["distributor"] = id32(group.distributor, "distributor").hex()
+    return json.dumps(options).encode()
+
+
 def _serve_options(policy: Policy | None, confidential: ServedConfidential | None) -> bytes:
     """A served procedure's options as macula_pool_serve_opts and
     macula_pool_serve_stream_opts take them."""
@@ -255,6 +294,9 @@ class Subscription:
             item["published_at"],
             item.get("payload"),
             item["delivered_via"],
+            sealed=item.get("sealed") == 1,
+            seal_key_id=item.get("seal_key_id"),
+            unopened=item.get("unopened"),
         )
 
     def dropped(self) -> int:
@@ -593,6 +635,52 @@ class Pool:
         however many links deliver it."""
         h, realm32 = self._live(), id32(realm, "realm")
         handle = await run_native(lambda: native().invoke("macula_pool_subscribe", h, realm32, topic.encode()))
+        return Subscription(handle)
+
+    async def publish_group(
+        self,
+        realm: Id,
+        topic: str,
+        payload: Any,
+        group: Group,
+        *,
+        ttl_ms: int = 0,
+        timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS,
+    ) -> None:
+        """Publishes payload on topic in realm, sealed under group's current
+        epoch. topic must be under group.prefix (macula_py.Group); the group is
+        joined first, which pulls its epoch from the org's distributor over a
+        sealed call, so this takes a timeout like a call. A refusal or a
+        publication that cannot be sealed is raised as GroupError with the
+        reason macula gave."""
+        n = native()
+        h, realm32 = self._live(), id32(realm, "realm")
+        body, options = encode_payload(payload).encode(), _group_options(group)
+        await run_blocking(
+            lambda c: n.invoke(
+                "macula_pool_publish_group", h, realm32, topic.encode(), body, options, ttl_ms, timeout_ms, c
+            ),
+            n.cancels,
+        )
+
+    async def subscribe_group(
+        self, realm: Id, topic: str, group: Group, *, timeout_ms: int = DEFAULT_CALL_TIMEOUT_MS
+    ) -> Subscription:
+        """Subscribes to topic in realm as a member of group: each event under
+        the group is opened, and one that cannot be arrives once with its
+        payload None and Event.unopened naming why. The group is joined first,
+        pulling its epoch from the org's distributor over a sealed call; a join
+        that stays held keeps refusing clear publishes under the prefix
+        (GroupError, reason group_held) even when this subscribe then fails."""
+        n = native()
+        h, realm32 = self._live(), id32(realm, "realm")
+        options = _group_options(group)
+        handle = await run_blocking(
+            lambda c: n.invoke(
+                "macula_pool_subscribe_group", h, realm32, topic.encode(), options, timeout_ms, c
+            ),
+            n.cancels,
+        )
         return Subscription(handle)
 
     async def serve(

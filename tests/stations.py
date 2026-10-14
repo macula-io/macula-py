@@ -45,6 +45,7 @@ class TestStations:
         self.realm_id: str = info["realm_id"]
         self.realm_key: str = info["realm_key"]
         self.org: str = info["org"]
+        self.org_key_id: str = info["org_key_id"]
         self._lock = threading.Lock()
 
     def _ask(self, command: str) -> str:
@@ -61,6 +62,16 @@ class TestStations:
         reply = self._ask(f"admit {node_id}")
         if not reply.startswith("admitted"):
             raise RuntimeError(reply)
+
+    def grant(self, node_id: str) -> str:
+        """The org's group_keys grant for the node: the org key's UCAN over
+        ``mri:org:<realm_name>/<org>``, living an hour. The org key itself is
+        the harness's; only the station can mint with it, and ``org_key_id``
+        is what a distributor's policy names it by."""
+        reply = self._ask(f"grant {node_id}")
+        if not reply.startswith("grant "):
+            raise RuntimeError(reply)
+        return reply.split(" ", 1)[1]
 
     def relayed(self) -> int:
         """How many streams the stations relay now."""
