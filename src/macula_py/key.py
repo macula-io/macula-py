@@ -1,4 +1,4 @@
-"""A node's identity key, as macula 12 has it: ML-DSA-87 (pq_pure) or the
+"""A node's identity key, as wire 1.0 has it: ML-DSA-87 (pq_pure) or the
 LAMPS composite ML-DSA-87 + RSA-4096-PSS (pq_hybrid, the fleet's profile),
 whose node_id solves the admission puzzle. Stored in a key file readable by
 its owner only."""
@@ -122,7 +122,7 @@ class NodeKey:
         fct: Mapping[str, Any] | None = None,
         prf: Sequence[str] = (),
     ) -> str:
-        """A UCAN (macula 12, D7) from this identity key for the node
+        """A UCAN (wire 1.0, D7) from this identity key for the node
         ``audience`` (its node_id), which alone can present it, granting each
         capability ``{"with": <MRI>, "can": <action>}`` until ``exp`` (Unix
         seconds). ``prf`` is a list naming the parent it is delegated from, by

@@ -1,4 +1,4 @@
-"""A live run against one macula 12 station: the pool connects pinned, reads
+"""A live run against one wire 1.0 station: the pool connects pinned, reads
 the DHT, calls mcl-echo/echo by direct dial, hears its own publication, and
 serves a UCAN-gated procedure that the station routes to it.
 

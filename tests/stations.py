@@ -1,4 +1,4 @@
-"""macula-go's teststation for a test module: two in-process macula 12
+"""macula-go's teststation for a test module: two in-process wire 1.0
 stations sharing a DHT and a test realm with one org, driven over stdin.
 
 The binary is MACULA_TESTSTATION (CI builds it from the macula-go ref in

@@ -1,4 +1,4 @@
-"""A node's pool of station links on the macula 12 mesh, as macula-go's pool
+"""A node's pool of station links on the wire 1.0 mesh, as macula-go's pool
 keeps it: every seed pinned by its node_id, the realms whose keys the node
 trusts, and one identity for every link. Calls and streams reach a provider
 by direct dial: its advertisements from the DHT, trusted only when the
@@ -156,7 +156,7 @@ class FoundRecords:
 
 
 class RecordType(enum.IntEnum):
-    """macula 12's record types."""
+    """wire 1.0's record types."""
 
     NODE_RECORD = 0x01
     PROCEDURE_ADVERTISEMENT = 0x06
@@ -901,7 +901,11 @@ class Pool:
         await run_blocking(lambda c: n.invoke("macula_pool_put_record", h, wire, len(wire), timeout_ms, c), n.cancels)
 
     async def close(self) -> None:
-        """Closes every link, subscription, served procedure and stream."""
+        """Closes every link, subscription, served procedure and stream. A
+        served procedure still live is not withdrawn the way stop() withdraws
+        one: its advertisement is left to its expiry. The station purges a
+        gone advertiser from its routing registry, so no call is routed to it
+        meanwhile, and the record is freed at its own expires_at."""
         if self._handle is not None:
             h, self._handle = self._handle, None
             await run_native(lambda: native().call("macula_pool_close", h))

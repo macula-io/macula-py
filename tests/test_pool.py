@@ -1,4 +1,4 @@
-"""The Python API over macula-go's C ABI, against two in-process macula 12
+"""The Python API over macula-go's C ABI, against two in-process wire 1.0
 stations (tests/stations.py): calls by direct dial and their errors,
 providers, a node's own namespace, streams (and that every stream is
 released), pubsub, content, the DHT, and cancellation."""

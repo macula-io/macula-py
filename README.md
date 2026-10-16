@@ -114,7 +114,7 @@ namespace (`~<node_id>/<name>`, see `Pool.own_procedure`) need none.
 ### UCANs
 
 A procedure served with a `policy` answers only callers presenting a UCAN
-(macula 12's post-quantum capability token) the policy accepts; the provider
+(wire 1.0's post-quantum capability token) the policy accepts; the provider
 checks each call and stream open before the handler sees it, as macula does,
 and answers the rest `unauthorized` (or `malformed_frame` for a proof no
 token in the chain names):

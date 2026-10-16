@@ -1,4 +1,4 @@
-"""macula 12's UCANs (D7) through this binding: tokens minted here, proof ids
+"""wire 1.0's UCANs (D7) through this binding: tokens minted here, proof ids
 as macula's vectors have them (tests/fixtures/ucan), and procedures served
 gated on a policy, whose provider judges every call and stream open as
 macula's link does. The verdicts themselves are held to macula's vectors in

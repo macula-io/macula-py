@@ -12,6 +12,33 @@ event arrives with `Event.sealed` false. `Pool.subscribe_group`'s docstring,
 an app wanting sealed events alone checks `Event.sealed`. No code changed, and
 no version was released for this.
 
+The wire 1.0 upkeep pass (macula-py#8), also unreleased. No version was
+released for it either; it is documentation, plus one latent path made legible.
+
+### Changed
+
+- **A library that reports no version string is refused naming itself**
+  (macula-py#8). `Native` decoded `macula_library_version()` and
+  `macula_wire_version()` as it read them, so a NULL would have surfaced as
+  `AttributeError: 'NoneType' object has no attribute 'decode'`. macula-go's C
+  ABI returns neither today, so this was latent and not a live bug: the two
+  reads now go through one accessor that refuses a NULL with a `MaculaError`
+  naming the library path and the function. The two load-time refusals'
+  messages, and their order (the ABI is read before the wire), are covered
+  against a stand-in library handed to `Native`.
+
+### Docs
+
+- The module docstrings, the README's UCAN section and the test module
+  docstrings described the macula 12 wire; they now name the wire the package
+  speaks. Unchanged: the mentions that are capability floors (`macula 12.11`),
+  the ones describing 0.5.0, which is still what a plain install resolves, and
+  the ones naming macula 12 as where a cross-verification fixture was signed.
+- `Pool.close()`'s docstring said it closes "every link, subscription, served
+  procedure and stream", which read as though a served procedure's
+  advertisement is withdrawn with it. `Served.stop()` withdraws one promptly;
+  `close()` leaves the advertisement to its expiry.
+
 ## 0.6.0rc2 (2026-10-14)
 
 On macula-go v0.27.0-rc.3's C ABI (was v0.27.0-rc.1): sealed group pub/sub, the

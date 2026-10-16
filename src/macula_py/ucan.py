@@ -1,4 +1,4 @@
-"""macula 12's UCANs (D7): capability tokens signed with a node's identity key
+"""wire 1.0's UCANs (D7): capability tokens signed with a node's identity key
 in its profile (ML-DSA-87, or the ML-DSA-87 + RSA-4096-PSS composite).
 
 A token is minted with NodeKey.ucan for the node that will present it (its

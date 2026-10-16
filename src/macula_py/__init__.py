@@ -1,4 +1,5 @@
-"""macula-py: a Python node on the macula 12 mesh, over macula-go's C ABI.
+"""macula-py: a Python node on the wire 1.0 mesh (macula 15), over macula-go's
+C ABI.
 
     key = await NodeKey.generate("pq_hybrid")
     async with await Pool.connect(key, [Seed(host, 4433, station_id)],

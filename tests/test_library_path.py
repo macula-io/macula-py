@@ -1,11 +1,85 @@
 """Where macula-py finds macula-go's shared library: the wheel's own copy, or
 MACULA_LIBRARY_PATH when set; a missing library fails naming both, and so does
-a library speaking another wire than this macula-py's own."""
+a library speaking another wire than this macula-py's own.
+
+What `Native` says when it refuses such a library, and the order it refuses in,
+is here too, against a stand-in library rather than a loaded one.
+"""
+
+import ctypes
 
 import pytest
 
-from macula_py._abi import speaks_our_wire
+from macula_py._abi import ABI_VERSION, FUNCTIONS, WIRE_VERSION, speaks_our_wire
 from macula_py._library import library_file_name, library_path
+from macula_py._native import Native
+from macula_py._wire import MaculaError
+
+
+class _StandInLibrary:
+    """A library as ctypes hands it over: every declared function present, and
+    the three version functions answering what the test sets. A None is the
+    NULL a C function returns for a string it does not have."""
+
+    def __init__(self, abi: int, release: str | None = "v0.27.0-rc.3", wire: str | None = "1.0") -> None:
+        for name in FUNCTIONS:
+            setattr(self, name, lambda *args: 0)
+        self.macula_abi_version = lambda: abi
+        # ctypes hands a const char * back as bytes, and a NULL as None.
+        self.macula_library_version = lambda: None if release is None else release.encode()
+        self.macula_wire_version = lambda: None if wire is None else wire.encode()
+
+
+def _native_over(monkeypatch, library: _StandInLibrary, path: str = "/nonexistent/libmacula.so") -> Native:
+    """Native over the stand-in, in place of the dlopen the loader would do."""
+    monkeypatch.setattr(ctypes, "CDLL", lambda _path: library)
+    return Native(path)
+
+
+def test_a_library_of_another_abi_is_refused_naming_both(monkeypatch):
+    with pytest.raises(MaculaError) as raised:
+        _native_over(monkeypatch, _StandInLibrary(abi=ABI_VERSION + 1))
+    message = str(raised.value)
+    assert f"macula C ABI {ABI_VERSION + 1}" in message
+    assert f"binds ABI {ABI_VERSION}" in message
+    assert "/nonexistent/libmacula.so" in message
+
+
+def test_a_library_of_another_wire_is_refused_naming_its_release_and_wire(monkeypatch):
+    with pytest.raises(MaculaError) as raised:
+        _native_over(monkeypatch, _StandInLibrary(abi=ABI_VERSION, release="v0.26.0", wire="0.13"))
+    message = str(raised.value)
+    assert "v0.26.0" in message
+    assert "wire 0.13" in message
+    assert f"speaks wire {WIRE_VERSION}" in message
+
+
+def test_the_abi_is_checked_before_the_wire(monkeypatch):
+    """A library wrong in both is refused for the ABI: the version string it
+    would have to speak is not read before it."""
+    with pytest.raises(MaculaError, match="macula C ABI"):
+        _native_over(monkeypatch, _StandInLibrary(abi=ABI_VERSION + 1, release="v0.26.0", wire="0.13"))
+
+
+def test_a_library_reporting_no_release_is_refused_naming_itself(monkeypatch):
+    with pytest.raises(MaculaError) as raised:
+        _native_over(monkeypatch, _StandInLibrary(abi=ABI_VERSION, release=None))
+    message = str(raised.value)
+    assert "/nonexistent/libmacula.so" in message
+    assert "macula_library_version" in message
+
+
+def test_a_library_reporting_no_wire_is_refused_naming_itself(monkeypatch):
+    with pytest.raises(MaculaError) as raised:
+        _native_over(monkeypatch, _StandInLibrary(abi=ABI_VERSION, wire=None))
+    message = str(raised.value)
+    assert "/nonexistent/libmacula.so" in message
+    assert "macula_wire_version" in message
+
+
+def test_a_library_of_our_wire_is_taken(monkeypatch):
+    """The other side of it: the same stand-in, answering this wire."""
+    assert _native_over(monkeypatch, _StandInLibrary(abi=ABI_VERSION)).wire == WIRE_VERSION
 
 
 @pytest.mark.parametrize(

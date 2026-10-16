@@ -58,17 +58,25 @@ class Native:
             raise MaculaError(
                 f"macula-py: {path} is macula C ABI {version}, and this macula-py binds ABI {ABI_VERSION}"
             )
-        # The library owns both strings (macula.h). A library built for another
-        # wire is refused here: it would connect to stations this macula-py's
-        # declarations do not describe.
-        self.release = self.lib.macula_library_version().decode("utf-8", "replace")
-        self.wire = self.lib.macula_wire_version().decode("utf-8", "replace")
+        # A library built for another wire is refused here: it would connect to
+        # stations this macula-py's declarations do not describe.
+        self.release = self._version("macula_library_version")
+        self.wire = self._version("macula_wire_version")
         if not speaks_our_wire(self.wire):
             raise MaculaError(
                 f"macula-py: {path} is macula-go {self.release}, speaking wire {self.wire}, "
                 f"and this macula-py speaks wire {WIRE_VERSION}"
             )
         self.cancels = _Cancels(self.lib)
+
+    def _version(self, name: str) -> str:
+        """The string name() returns, which the library owns (macula.h) and
+        never frees. A NULL back from it is refused naming the library: it
+        reaches nothing above this module as a None to decode."""
+        value = getattr(self.lib, name)()
+        if value is None:
+            raise MaculaError(f"macula-py: {self.path} returned no {name}()")
+        return value.decode("utf-8", "replace")
 
     def invoke(self, name: str, *args: Any) -> Any:
         """name(*args, &err_out), raising the error err_out names."""
