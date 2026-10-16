@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# ONE live check of macula-py against a macula 12 station, with a key
-# generated for the run and never saved. Defaults: helsinki and the io.macula
-# realm; the realm key is io.macula's PUBLIC half, read from mcl-echo's header.
+# ONE live check of macula-py against a wire 1.0 station, with a key generated
+# for the run and never saved. The default seed below is a fleet station on the
+# older wire, which this package cannot reach: a wire 1.0 run sets
+# MACULA_PY_LIVE_SEED and MACULA_PY_LIVE_STATION_ID to a w1 island station, as
+# the 0.6.0rc1 live proof did. The realm key is io.macula's PUBLIC half, read
+# from mcl-echo's header.
 # Override any MACULA_PY_LIVE_* variable to point elsewhere.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"

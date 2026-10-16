@@ -29,7 +29,8 @@
 > the default until wire 1.0 ships on the fleet. Install the candidate with
 > `pip install --pre macula-py` or `pip install macula-py==0.6.0rc2`.
 >
-> **Status, 2026-09-29:** on the **macula 12** wire: ML-DSA-87 identities (as
+> **Status of 0.5.0, 2026-09-29:** that line, the one a plain install resolves,
+> on the **macula 12** wire: ML-DSA-87 identities (as
 > the ML-DSA-87 + RSA-PSS-4096 composite in `pq_hybrid`, the fleet's profile),
 > ML-KEM hybrid key exchange, signed requests, and since 0.4.0 handshake v5
 > (the session bound to its TLS channel) and macula 13's end-to-end sealing
