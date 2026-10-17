@@ -640,7 +640,9 @@ class Pool:
 
     async def subscribe(self, realm: Id, topic: str) -> Subscription:
         """Subscribes to topic in realm: each verified event is heard once,
-        however many links deliver it."""
+        however many links deliver it. Returns once a station has accepted
+        the subscription; a refusal, or no answer within 30 seconds, is a
+        RefusedError, and no link up is a MaculaError."""
         h, realm32 = self._live(), id32(realm, "realm")
         handle = await run_native(lambda: native().invoke("macula_pool_subscribe", h, realm32, topic.encode()))
         return Subscription(handle)
@@ -719,7 +721,10 @@ class Pool:
         this node's KEM key when the pool was connected with kem_advertise;
         "required" refuses every clear call and needs kem_advertise (else
         ConfidentialityError, kem_advertise_disabled); "off" serves in the
-        clear. request.sealed says whether a call came sealed."""
+        clear. request.sealed says whether a call came sealed.
+
+        Returns once a station has accepted the advertisement; a refusal, or
+        no answer within 30 seconds, is a RefusedError."""
         n = native()
         h, realm32 = self._live(), id32(realm, "realm")
         options = _serve_options(policy, confidential)
@@ -751,7 +756,8 @@ class Pool:
         handler returns, and aborted with handler_error when it raises. With a
         policy (macula_py.ucan), only opens whose UCAN it accepts start a
         session; the rest are refused with a stream error, unauthorized.
-        confidential as serve's."""
+        confidential as serve's, and so is the wait for a station's
+        acceptance."""
         n = native()
         h, realm32 = self._live(), id32(realm, "realm")
         options = _serve_options(policy, confidential)

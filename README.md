@@ -19,7 +19,7 @@
 
 ---
 
-> **Wire 1.0, 0.6.0rc2 (a pre-release):** built on macula-go v0.27.0-rc.3, it
+> **Wire 1.0, 0.6.0rc3 (a pre-release):** built on macula-go v0.27.0-rc.7, it
 > speaks wire 1.0 (macula 15) and nothing older, so it reaches a wire 1.0
 > station and never the 14.x fleet. This candidate adds sealed group pub/sub,
 > the member's side: a Python node joins a realm group, pulling its epoch keys
@@ -27,7 +27,7 @@
 > publishes and reads the group's sealed events. A pre-release is not what a
 > plain `pip install macula-py` resolves: 0.5.0, on the macula 12 wire, stays
 > the default until wire 1.0 ships on the fleet. Install the candidate with
-> `pip install --pre macula-py` or `pip install macula-py==0.6.0rc2`.
+> `pip install --pre macula-py` or `pip install macula-py==0.6.0rc3`.
 >
 > **Status of 0.5.0, 2026-09-29:** that line, the one a plain install resolves,
 > on the **macula 12** wire: ML-DSA-87 identities (as
