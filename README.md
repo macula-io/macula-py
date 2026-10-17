@@ -19,18 +19,16 @@
 
 ---
 
-> **Wire 1.0, 0.6.0rc4 (a pre-release):** built on macula-go v0.27.0-rc.8, it
-> speaks wire 1.0 (macula 15) and nothing older, so it reaches a wire 1.0
-> station and never the 14.x fleet. This candidate adds sealed group pub/sub,
-> the member's side: a Python node joins a realm group, pulling its epoch keys
+> **Wire 1.0, 0.6.0 (2026-10-19):** built on macula-go v0.27.0, it speaks wire
+> 1.0 (macula 15) and nothing older, so it reaches only a wire 1.0 station. The
+> fleet moved to wire 1.0 on 19 Oct 2026 at 18:03 UTC, and from then on 0.5.0
+> and everything before it can no longer connect. A plain
+> `pip install macula-py` resolves 0.6.0. It adds sealed group pub/sub, the
+> member's side: a Python node joins a realm group, pulling its epoch keys
 > from the org's distributor over a sealed call with the org's grant, and
-> publishes and reads the group's sealed events. A pre-release is not what a
-> plain `pip install macula-py` resolves: 0.5.0, on the macula 12 wire, stays
-> the default until wire 1.0 ships on the fleet. Install the candidate with
-> `pip install --pre macula-py` or `pip install macula-py==0.6.0rc4`.
+> publishes and reads the group's sealed events.
 >
-> **Status of 0.5.0, 2026-09-29:** that line, the one a plain install resolves,
-> on the **macula 12** wire: ML-DSA-87 identities (as
+> **Status of 0.5.0, 2026-09-29:** the line before wire 1.0, on the **macula 12** wire: ML-DSA-87 identities (as
 > the ML-DSA-87 + RSA-PSS-4096 composite in `pq_hybrid`, the fleet's profile),
 > ML-KEM hybrid key exchange, signed requests, and since 0.4.0 handshake v5
 > (the session bound to its TLS channel) and macula 13's end-to-end sealing
