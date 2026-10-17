@@ -149,6 +149,27 @@ class TestNativeError:
         e = native_error('{"kind":"group","message":"m","reason":"not_a_member"}')
         assert (e.reason, e.prefix) == ("not_a_member", None)
 
+    def test_a_registration_refusal_names_its_reason_registration_and_station(self):
+        station = "ab" * 32
+        e = native_error(
+            '{"kind":"refused","message":"m","reason":"too_many_providers",'
+            f'"registration":"advertise","station":"{station}"}}'
+        )
+        assert isinstance(e, RefusedError)
+        assert (e.reason, e.registration, e.station) == ("too_many_providers", "advertise", station)
+
+    def test_no_station_answering_is_unacknowledged(self):
+        e = native_error(
+            '{"kind":"refused","message":"m","reason":"unacknowledged","registration":"subscribe",'
+            f'"station":"{"cd" * 32}"}}'
+        )
+        assert (e.reason, e.registration) == ("unacknowledged", "subscribe")
+
+    def test_a_refusal_that_is_not_a_registrations_names_nothing(self):
+        e = native_error('{"kind":"refused","message":"m"}')
+        assert isinstance(e, RefusedError)
+        assert (e.reason, e.registration, e.station) == (None, None, None)
+
     def test_timeout_is_a_timeout_error(self):
         e = native_error('{"kind":"timeout","message":"call timed out"}')
         assert isinstance(e, MaculaTimeoutError)

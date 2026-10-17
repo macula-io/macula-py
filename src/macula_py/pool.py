@@ -642,7 +642,8 @@ class Pool:
         """Subscribes to topic in realm: each verified event is heard once,
         however many links deliver it. Returns once a station has accepted
         the subscription; a refusal, or no answer within 30 seconds, is a
-        RefusedError, and no link up is a MaculaError."""
+        RefusedError naming the station's reason, the registration and the
+        station, and no link up is a MaculaError."""
         h, realm32 = self._live(), id32(realm, "realm")
         handle = await run_native(lambda: native().invoke("macula_pool_subscribe", h, realm32, topic.encode()))
         return Subscription(handle)
@@ -724,7 +725,8 @@ class Pool:
         clear. request.sealed says whether a call came sealed.
 
         Returns once a station has accepted the advertisement; a refusal, or
-        no answer within 30 seconds, is a RefusedError."""
+        no answer within 30 seconds, is a RefusedError naming the station's
+        reason, the registration and the station."""
         n = native()
         h, realm32 = self._live(), id32(realm, "realm")
         options = _serve_options(policy, confidential)

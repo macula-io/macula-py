@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.6.0rc4 (2026-10-17)
+
+### Added
+
+- **A `RefusedError` from a serve or subscribe names the station's verdict**:
+  `reason` (`too_many_providers`, `advertiser_quota`, `name_too_long`,
+  `record_refused`, `not_authorized`, `too_many_realms`, `refused`, or
+  `unacknowledged` when no station answered within 30 seconds),
+  `registration` (`advertise` or `subscribe`) and `station`, its node_id as
+  hex, as macula-go's C ABI gives them since v0.27.0-rc.4 (macula#12). Any
+  other refusal has the three as None.
+
+### Changed
+
+- The native library is built from macula-go v0.27.0-rc.8 (was
+  v0.27.0-rc.7): a content fetch gives a sharer 2 s for its root answer
+  (macula-go#26). `abi/macula.h` is its header.
+
 ## 0.6.0rc3 (2026-10-17)
 
 ### Security

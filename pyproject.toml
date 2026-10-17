@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "macula-py"
-version = "0.6.0rc3"
+version = "0.6.0rc4"
 description = "A Python node on the macula mesh: post-quantum identity and key exchange, calls, streams, pub/sub, the DHT and node-served content, over macula-go's C ABI."
 readme = "README.md"
 license = "Apache-2.0"

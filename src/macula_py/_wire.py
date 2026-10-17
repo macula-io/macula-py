@@ -65,7 +65,22 @@ class ClosedError(MaculaError):
 
 
 class RefusedError(MaculaError):
-    """The network refused it: an advertisement, an admission, a key."""
+    """The network refused it: an advertisement, an admission, a key. For a
+    serve or subscribe (macula-go v0.27.0-rc.4 on, macula#12) it is the
+    station's verdict: ``reason`` is the station's (``too_many_providers``,
+    ``advertiser_quota``, ``name_too_long``, ``record_refused``,
+    ``not_authorized``, ``too_many_realms``, ``refused``) or
+    ``unacknowledged`` when no station answered within 30 seconds,
+    ``registration`` is ``advertise`` or ``subscribe``, and ``station`` the
+    station's node_id as hex. Any other refusal has all three None."""
+
+    def __init__(
+        self, message: str, reason: str | None = None, registration: str | None = None, station: str | None = None
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.registration = registration
+        self.station = station
 
 
 class ProviderError(MaculaError):
@@ -230,7 +245,6 @@ _KINDS: dict[str, type[MaculaError]] = {
     "not_shared": NotSharedError,
     "answered": AlreadyAnsweredError,
     "closed": ClosedError,
-    "refused": RefusedError,
     "not_settled": NotSettledError,
     "not_a_caller": NotACallerError,
     "failed": MaculaError,
@@ -239,7 +253,8 @@ _KINDS: dict[str, type[MaculaError]] = {
 
 def _text(value: object) -> str | None:
     """A field that is a string when the native layer carries it, else None:
-    a key id, a named or found key, a group's prefix."""
+    a key id, a named or found key, a group's prefix, a refusal's reason,
+    registration or station."""
     return value if isinstance(value, str) else None
 
 
@@ -267,6 +282,13 @@ def native_error(text: str) -> Exception:
         )
     if kind == "group":
         return GroupError(str(error.get("reason") or ""), _text(error.get("prefix")), message)
+    if kind == "refused":
+        return RefusedError(
+            f"macula-py: {message}",
+            _text(error.get("reason")),
+            _text(error.get("registration")),
+            _text(error.get("station")),
+        )
     cls = _KINDS.get(kind)
     if cls is None:
         return MaculaError(f"macula-py: the native layer failed with unknown kind {kind!r}: {message}")
