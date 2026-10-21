@@ -21,6 +21,6 @@ jobs:
     name: Python blocks in the docs
     permissions:
       contents: read
-    uses: macula-io/macula-ci-images/.github/workflows/doc-snippets-python.yml@9fe158192ecc3c728a5dbc6a125ac777d5b993e1
+    uses: macula-io/macula-ci-images/.github/workflows/doc-snippets-python.yml@90ae94fdefb067d0a54da6b85950ed299cb6c1bb
     with:
       python-version: '3.13'
