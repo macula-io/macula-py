@@ -29,6 +29,23 @@ jobs:
           version: v2.15.0
           working-directory: scripts/interop/capture
 
+  # The structural floor (macula-codebase-checks#9): deep nesting and tangled
+  # functions fail the build. The thresholds are declared in pyproject.toml's
+  # [tool.ruff], with no baseline and no inline disables; ruff is pinned so a
+  # preview rule cannot change between releases.
+  lint:
+    name: structural floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: ruff
+        run: |
+          python -m pip install --quiet ruff==0.17.1
+          ruff check .
+
   test:
     name: tests (Python ${{ matrix.python }})
     strategy:

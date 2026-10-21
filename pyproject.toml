@@ -41,3 +41,24 @@ pythonpath = ["src", "."]
 asyncio_mode = "auto"
 timeout = 120
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+# The structural floor (macula-codebase-checks#9): deep nesting and tangled
+# functions fail the build, with no baseline and no inline disables. Every
+# threshold is spelled out, deliberately, because a tool default is not the
+# floor: a default can change under us.
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["C901", "PLR1702"]
+# PLR1702 is a preview rule: without this line it never runs.
+preview = true
+
+[tool.ruff.lint.mccabe]
+# Cyclomatic complexity, credo's measure: branch points + 1.
+max-complexity = 9
+
+[tool.ruff.lint.pylint]
+# Blocks, counted as clippy counts them: the function body is 1, so 3 is
+# elvis's 2.
+max-nested-blocks = 3
