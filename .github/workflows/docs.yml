@@ -1,0 +1,26 @@
+# Every Python block in the README and guides type-checks against this package
+# (macula-codebase-checks#8), so a reader who copies an example gets code that
+# matches it.
+#
+# ⚠ NO paths-ignore HERE, on purpose: ci.yml ignores **.md on push, which is right
+# for the suite and wrong for this check. release.yml calls this workflow on the
+# tagged commit and publishes only when it is green.
+name: docs
+
+on:
+  workflow_call:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-blocks:
+    name: Python blocks in the docs
+    permissions:
+      contents: read
+    uses: macula-io/macula-ci-images/.github/workflows/doc-snippets-python.yml@9fe158192ecc3c728a5dbc6a125ac777d5b993e1
+    with:
+      python-version: '3.13'

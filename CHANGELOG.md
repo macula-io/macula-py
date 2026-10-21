@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- CI type-checks every Python block in the README and the guides against the
+  package (`docs.yml`, macula-codebase-checks#8), on every change including
+  doc-only ones, and a release waits on it.
+
 ## 0.6.0 (2026-10-19)
 
 The wire 1.0 release, for the fleet's flag day (19 Oct 2026, 18:03 UTC): from

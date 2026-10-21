@@ -43,6 +43,12 @@ jobs:
     needs: guard
     uses: ./.github/workflows/ci.yml
 
+  # The docs check (docs.yml) on the tagged commit: a release whose README or
+  # guides carry a Python block that no longer matches the package does not publish.
+  docs:
+    needs: guard
+    uses: ./.github/workflows/docs.yml
+
   wheels:
     needs: guard
     uses: ./.github/workflows/wheels.yml
@@ -79,7 +85,7 @@ jobs:
         run: MACULA_LIBRARY_PATH="$PWD/build/native/libmacula-linux-x64.so" python -m pytest -v
 
   publish:
-    needs: [test, wheels, released-library]
+    needs: [test, docs, wheels, released-library]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
