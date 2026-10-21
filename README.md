@@ -119,6 +119,8 @@ and answers the rest `unauthorized` (or `malformed_frame` for a proof no
 token in the chain names):
 
 ```python
+import time
+
 from macula_py import UcanRequired
 from macula_py.ucan import proof_id
 
