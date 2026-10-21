@@ -88,3 +88,18 @@ jobs:
     uses: ./.github/workflows/wheels.yml
     with:
       library: build
+
+  # A dependency the wheel ships with a published advisory fails the build
+  # (macula-codebase-checks#11). pip resolves what `pip install .` would bring
+  # in without building this project, and pip-audit reads that set; the extra
+  # libraries the wheels link (macula-go) are that repository's own gate.
+  # release.yml calls this workflow on the tagged commit, so the release
+  # waits on it.
+  advisories:
+    name: Dependency advisories
+    permissions:
+      contents: read
+    uses: macula-io/macula-ci-images/.github/workflows/dependency-advisories.yml@dbc9533eb409c2118f45110613160060cc582f5d
+    with:
+      ecosystem: python
+      python-version: '3.13'
