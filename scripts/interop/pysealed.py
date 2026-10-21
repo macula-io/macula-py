@@ -89,6 +89,22 @@ async def serve(pool: Pool, realm: str, hold: str) -> int:
     return 0
 
 
+async def first_chunk_and_reply(stream) -> tuple[str | None, object]:
+    """The provider's first chunk and its reply, read in the order it sends
+    them; either stays None if the stream ends before naming one."""
+    chunk = reply = None
+    for _ in range(4):
+        frame = await stream.recv(timeout_ms=10_000)
+        if isinstance(frame, StreamData):
+            chunk = as_text(frame.body)
+        if isinstance(frame, StreamReply):
+            reply = frame.payload
+            break
+        if isinstance(frame, StreamEnd) and frame.role == "both":
+            break
+    return chunk, reply
+
+
 async def call(pool: Pool, realm: str, provider: str, peer: str) -> int:
     vault, watch = own(provider, "vault"), own(provider, "watch")
     reported: object = None
@@ -109,24 +125,16 @@ async def call(pool: Pool, realm: str, provider: str, peer: str) -> int:
     ok = called == f"kept by {peer}" and sealed_to(call_report, provider)
 
     chunk = reply = stream_report = None
-    async with await pool.open_stream(
-        realm, watch, StreamMode.SERVER, {}, confidential="required", timeout_ms=10_000
-    ) as stream:
-        try:
-            for _ in range(4):
-                frame = await stream.recv(timeout_ms=10_000)
-                if isinstance(frame, StreamData):
-                    chunk = as_text(frame.body)
-                if isinstance(frame, StreamReply):
-                    reply = frame.payload
-                    break
-                if isinstance(frame, StreamEnd) and frame.role == "both":
-                    break
+    try:
+        async with await pool.open_stream(
+            realm, watch, StreamMode.SERVER, {}, confidential="required", timeout_ms=10_000
+        ) as stream:
+            chunk, reply = await first_chunk_and_reply(stream)
             # Settled on the provider's first chunk opened under the stream's
             # key, and kept after the end.
             stream_report = stream.report()
-        except Exception as e:
-            print(f"sealed stream error: {e!r}")
+    except Exception as e:
+        print(f"sealed stream error: {e!r}")
     print(f"sealed stream: chunk {chunk!r}, reply {reply!r}")
     print(f"stream report: {stream_report!r}")
     ok = ok and chunk == f"chunk from {peer}" and reply == f"streamed by {peer}" and sealed_to(stream_report, provider)

@@ -171,6 +171,17 @@ class NotACallerError(MaculaError):
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 
 
+def _to_wire_map(value: dict) -> dict:
+    """A dict's wire form: str keys, each value converted as _to_wire does.
+    A key of any other type is refused: a payload's maps carry str keys."""
+    out = {}
+    for k, v in value.items():
+        if not isinstance(k, str):
+            raise TypeError(f"macula-py: map keys must be str, got {type(k).__name__}")
+        out[k] = _to_wire(v)
+    return out
+
+
 def _to_wire(value: object) -> object:
     if isinstance(value, bool):
         raise TypeError("macula-py: no boolean on the macula wire; encode true/false as 1/0")
@@ -185,12 +196,7 @@ def _to_wire(value: object) -> object:
     if isinstance(value, (list, tuple)):
         return [_to_wire(v) for v in value]
     if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            if not isinstance(k, str):
-                raise TypeError(f"macula-py: map keys must be str, got {type(k).__name__}")
-            out[k] = _to_wire(v)
-        return out
+        return _to_wire_map(value)
     raise TypeError(f"macula-py: a {type(value).__name__} has no macula wire form")
 
 
@@ -258,6 +264,16 @@ def _text(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _failed_without_a_kind(kind: str, message: str) -> MaculaError:
+    """The kinds that carry nothing but a class (``_KINDS``): the class the
+    kind names over the macula-py message, or a MaculaError naming a kind this
+    binding does not know. Never silently something else."""
+    cls = _KINDS.get(kind)
+    if cls is None:
+        return MaculaError(f"macula-py: the native layer failed with unknown kind {kind!r}: {message}")
+    return cls(f"macula-py: {message}")
+
+
 def native_error(text: str) -> Exception:
     """The native layer's error JSON as the class its kind names. A kind this
     binding does not know, or text that is not the contract's JSON, comes out
@@ -289,7 +305,4 @@ def native_error(text: str) -> Exception:
             _text(error.get("registration")),
             _text(error.get("station")),
         )
-    cls = _KINDS.get(kind)
-    if cls is None:
-        return MaculaError(f"macula-py: the native layer failed with unknown kind {kind!r}: {message}")
-    return cls(f"macula-py: {message}")
+    return _failed_without_a_kind(kind, message)

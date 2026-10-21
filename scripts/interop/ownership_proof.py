@@ -42,6 +42,18 @@ FIELDS = {
 }
 
 
+async def call_until_captured(caller: Pool, capture_id: str, signed: dict) -> object:
+    """The capture's advertisement reaches the other station in its own time:
+    retry until a call lands, and hand back its reply."""
+    for _ in range(100):
+        try:
+            return await caller.call(bytes(32), f"~{capture_id}/capture", signed)
+        except Exception as e:  # the advertisement reaches the other station in its own time
+            last = e
+            await asyncio.sleep(0.2)
+    raise RuntimeError(f"the capture was never reached: {last}")
+
+
 async def main(capture: str, out: str) -> None:
     stations = TestStations("pq_hybrid")
     try:
@@ -58,15 +70,7 @@ async def main(capture: str, out: str) -> None:
             # A sender may write a caller; the station link replaces it with
             # the one it authenticated, and it is never a signed field.
             signed["caller"] = "written by the sender"
-            for _ in range(100):
-                try:
-                    reply = await caller.call(bytes(32), f"~{capture_id}/capture", signed)
-                    break
-                except Exception as e:  # the advertisement reaches the other station in its own time
-                    last = e
-                    await asyncio.sleep(0.2)
-            else:
-                raise RuntimeError(f"the capture was never reached: {last}")
+            reply = await call_until_captured(caller, capture_id, signed)
         assert reply == "captured", reply
         if provider.wait(timeout=30) != 0:
             raise RuntimeError("capture failed")

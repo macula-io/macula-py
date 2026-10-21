@@ -82,6 +82,24 @@ def _discard_on_result(future: asyncio.Future, discard: Callable[[T], None]) -> 
     future.add_done_callback(hand_over)
 
 
+def _end_the_call(
+    future: asyncio.Future,
+    cancelled: threading.Event,
+    cancels: Cancels,
+    token: list[int],
+    discard: Callable[[T], None] | None,
+) -> None:
+    """Ends the native call the task was cancelled from: its token is cancelled
+    unless the call has already returned, and a result that arrives anyway is
+    handed to discard rather than leaked."""
+    if not future.done():
+        cancelled.set()
+        if token:
+            cancels.cancel(token[0])
+    if discard is not None:
+        _discard_on_result(future, discard)
+
+
 async def run_blocking(
     call: Callable[[int], T], cancels: Cancels, discard: Callable[[T], None] | None = None
 ) -> T:
@@ -114,10 +132,5 @@ async def run_blocking(
     except NativeCancelled:
         raise asyncio.CancelledError() from None
     except asyncio.CancelledError:
-        if not future.done():
-            cancelled.set()
-            if token:
-                cancels.cancel(token[0])
-        if discard is not None:
-            _discard_on_result(future, discard)
+        _end_the_call(future, cancelled, cancels, token, discard)
         raise

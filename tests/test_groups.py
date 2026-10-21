@@ -275,6 +275,16 @@ async def test_a_member_publishes_under_the_vectors_epoch_and_opens_the_event(en
     assert distributor.seen == [{"prefix": prefix, "epoch": "current"}] * 2
 
 
+async def holder_publishing_clear_is_refused(
+    publisher: Pool, env: TestStations, topic: str, prefix: str
+) -> None:
+    """A node that holds the group's key may not publish clear under it:
+    macula refuses that as group_held, naming the group's prefix."""
+    with pytest.raises(GroupError) as refused:
+        await publisher.publish(env.realm_id, topic, "clear")
+    assert (refused.value.reason, refused.value.prefix) == ("group_held", prefix)
+
+
 async def test_a_plain_subscription_hears_the_event_unopened(env):
     prefix = group_prefix(env, "plain")
     topic = f"{prefix}/said_v1"
@@ -300,9 +310,7 @@ async def test_a_plain_subscription_hears_the_event_unopened(env):
                 assert (heard.payload, heard.unopened) == (None, "no_group")
                 assert opened is not None and opened.payload == {"said": "hush"}
                 # And a node holding the group may not publish clear under it.
-                with pytest.raises(GroupError) as refused:
-                    await publisher.publish(env.realm_id, topic, "clear")
-                assert (refused.value.reason, refused.value.prefix) == ("group_held", prefix)
+                await holder_publishing_clear_is_refused(publisher, env, topic, prefix)
 
 
 async def test_an_event_under_a_new_epoch_is_pulled_by_id_and_opened(env):
@@ -380,6 +388,32 @@ def grants(env: TestStations, member: Pool, root: NodeKey, impostor: NodeKey) ->
     }
 
 
+async def grant_case_reaches_its_verdict(
+    member: Pool, env: TestStations, prefix: str, distributor: Distributor, name: str, case: tuple[str, str | None]
+) -> None:
+    """One of grants()' cases through the pull's own CALL, the vector's
+    call_current payload, so a verdict here is the verdict the join would get:
+    a refusal must be the case's own, and an admitted token must bring back the
+    epoch as it crossed the ABI (an 8-byte id, the 32-byte key under it)."""
+    token, refused = case
+    call = lambda: member.call(
+        env.realm_id, f"{env.org}/group_keys_v1", {"prefix": prefix, "epoch": "current"}, ucan=token,
+        confidential="required",
+    )
+    try:
+        reply = await until_served(call)
+    except ProviderError as e:
+        assert e.code == refused, f"{name}: {e.code}"
+        return
+    assert refused is None, name
+    # The epoch as it crossed the ABI, the vector's bytes: an 8-byte id, the
+    # 32-byte key under it, the times above it.
+    epoch = reply["epochs"][0]
+    assert (reply["prefix"], reply["policy"]) == (prefix, "required")
+    assert (epoch["id"], epoch["key"]) == (distributor.publishing.id, distributor.publishing.key)
+    assert (len(epoch["id"]), len(epoch["key"])) == (ID_SIZE, KEY_SIZE)
+
+
 async def test_each_of_the_vectors_grant_cases_reaches_its_verdict(env):
     root, impostor = await NodeKey.generate(env.profile), await NodeKey.generate(env.profile)
     prefix = group_prefix(env, "judged")
@@ -391,26 +425,21 @@ async def test_each_of_the_vectors_grant_cases_reaches_its_verdict(env):
     async with standin, await distributor.served(env):
         member = await node(env, 0)
         async with member:
-            for name, (token, refused) in grants(env, member, root, impostor).items():
-                # The pull's own CALL, the vector's call_current payload, so a
-                # verdict here is the verdict the join would get.
-                call = lambda t=token: member.call(
-                    env.realm_id, f"{env.org}/group_keys_v1", {"prefix": prefix, "epoch": "current"}, ucan=t,
-                    confidential="required",
-                )
-                try:
-                    reply = await until_served(call)
-                except ProviderError as e:
-                    assert e.code == refused, f"{name}: {e.code}"
-                    continue
-                assert refused is None, name
-                # The epoch as it crossed the ABI, the vector's bytes: an
-                # 8-byte id, the 32-byte key under it, the times above it.
-                epoch = reply["epochs"][0]
-                assert (reply["prefix"], reply["policy"]) == (prefix, "required")
-                assert (epoch["id"], epoch["key"]) == (distributor.publishing.id, distributor.publishing.key)
-                assert (len(epoch["id"]), len(epoch["key"])) == (ID_SIZE, KEY_SIZE)
+            for name, case in grants(env, member, root, impostor).items():
+                await grant_case_reaches_its_verdict(member, env, prefix, distributor, name, case)
     assert all(distributor.sealed)
+
+
+async def a_member_with_a_grant_of_its_own_joins(
+    env: TestStations, prefix: str, topic: str, capability: dict, root: NodeKey
+) -> None:
+    """A member with a grant of its own joins the same group right after:
+    what refused the expired token was the gate, not a dead distributor."""
+    late = await node(env, 0)
+    async with late:
+        granted = Group(prefix, root.ucan(late.node_id(), [capability], exp=int(time.time()) + 300))
+        async with await until_joined(lambda: late.subscribe_group(env.realm_id, topic, granted)):
+            pass
 
 
 async def test_a_grant_macula_refuses_does_not_join_at_publish_or_subscribe(env):
@@ -457,13 +486,7 @@ async def test_a_grant_macula_refuses_does_not_join_at_publish_or_subscribe(env)
             # never reached its handler, and a member with a grant of its own
             # joins the same group right after.
             assert distributor.seen == [{"prefix": prefix, "epoch": "current"}]
-            late = await node(env, 0)
-            async with late:
-                granted = Group(prefix, root.ucan(late.node_id(), [capability], exp=int(time.time()) + 300))
-                async with await until_joined(
-                    lambda: late.subscribe_group(env.realm_id, topic, granted)
-                ):
-                    pass
+            await a_member_with_a_grant_of_its_own_joins(env, prefix, topic, capability, root)
 
 
 async def test_a_node_the_distributor_removed_is_refused(env):
@@ -508,6 +531,17 @@ def malformed(epoch: dict) -> dict[str, Callable[[dict], dict]]:
     }
 
 
+async def a_malformed_reply_is_refused(
+    member: Pool, env: TestStations, topic: str, distributor: Distributor, name: str, transform: Callable[[dict], dict]
+) -> None:
+    """One of malformed()' replies, refused by a member that holds nothing of
+    the group: the same no_distributor a missing distributor gives."""
+    distributor.transform = transform
+    with pytest.raises(GroupError) as refused:
+        await member.subscribe_group(env.realm_id, topic, distributor.member_group(env, member))
+    assert refused.value.reason == "no_distributor", name
+
+
 async def test_a_reply_that_is_not_the_protocols_is_refused(env):
     prefix = group_prefix(env, "malformed")
     topic = f"{prefix}/said_v1"
@@ -525,10 +559,7 @@ async def test_a_reply_that_is_not_the_protocols_is_refused(env):
                 )
             )
             for name, transform in malformed(distributor.serves[0].wire()).items():
-                distributor.transform = transform
-                with pytest.raises(GroupError) as refused:
-                    await member.subscribe_group(env.realm_id, topic, distributor.member_group(env, member))
-                assert refused.value.reason == "no_distributor", name
+                await a_malformed_reply_is_refused(member, env, topic, distributor, name, transform)
             # The control: the same procedure, the same member, only the reply
             # back to the protocol's — and the join is held.
             distributor.transform = lambda reply: reply

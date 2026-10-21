@@ -122,6 +122,24 @@ class TestOwnNamespace:
                 await p.serve(env.realm_id, f"~{'01' * 32}/ring", lambda r: 1)
 
 
+async def chunks_before_the_end(stream) -> list[bytes]:
+    """Every chunk a stream sent before it ended, and nothing after its end."""
+    got = []
+    async for frame in stream:
+        if isinstance(frame, StreamData):
+            got.append(frame.body)
+        if isinstance(frame, StreamEnd):
+            break
+    return got
+
+
+async def read_to_the_end(stream) -> None:
+    """Reads a stream to its end, discarding frames: the error that ends it is
+    the caller's to catch."""
+    async for _frame in stream:
+        pass
+
+
 class TestStreams:
     async def test_a_server_streams_chunks_arrive_and_nothing_stays_relayed(self, env):
         provider = await node(env, 0, admitted=True)
@@ -133,13 +151,8 @@ class TestStreams:
 
         caller = await node(env, 1)
         async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, watch):
-            got = []
             async with await caller.open_stream(env.realm_id, procedure, StreamMode.SERVER) as stream:
-                async for frame in stream:
-                    if isinstance(frame, StreamData):
-                        got.append(frame.body)
-                    if isinstance(frame, StreamEnd):
-                        break
+                got = await chunks_before_the_end(stream)
             assert got == [b"one", b"two", b"three"]
             await eventually("every stream released", lambda: env.relayed() == 0)
 
@@ -404,8 +417,7 @@ class TestServingEdges:
         async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, breaks):
             async with await caller.open_stream(env.realm_id, procedure, StreamMode.SERVER) as stream:
                 with pytest.raises(StreamError) as ended:
-                    async for _frame in stream:
-                        pass
+                    await read_to_the_end(stream)
                 assert ended.value.code == "handler_error"
 
     async def test_values_sent_on_a_bidi_stream_arrive_as_values(self, env):

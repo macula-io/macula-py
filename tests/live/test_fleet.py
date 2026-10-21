@@ -17,6 +17,7 @@ import hashlib
 import os
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -35,6 +36,21 @@ def _required(name: str) -> str:
 def _seed(text: str) -> tuple[str, int]:
     host, _, port = text.rpartition(":")
     return host.strip("[]"), int(port)
+
+
+async def _until_routed(call: Callable[[], Awaitable[object]]) -> object:
+    """A gated procedure answers only once the station has routed its
+    advertisement: retry while the station still says unknown_next_peer, and
+    let anything else, or the deadline, through as it is (test_ucan.until_served
+    retries the same way)."""
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            return await call()
+        except ProviderError as e:
+            if e.code != "unknown_next_peer" or time.monotonic() > deadline:
+                raise
+            await asyncio.sleep(0.5)
 
 
 @pytest.fixture(scope="module")
@@ -100,15 +116,8 @@ async def test_a_gated_procedure_is_served_to_its_grant_alone(live):
             grant = root.ucan(
                 caller.node_id(), [{"with": f"mri:realm:{realm_name}", "can": "invoke"}], exp=int(time.time()) + 300
             )
-            deadline = time.monotonic() + 30
-            while True:
-                try:
-                    assert await caller.call(realm, procedure, {}, ucan=grant, timeout_ms=15_000) == "served"
-                    break
-                except ProviderError as e:
-                    if e.code != "unknown_next_peer" or time.monotonic() > deadline:
-                        raise
-                    await asyncio.sleep(0.5)
+            call = lambda: caller.call(realm, procedure, {}, ucan=grant, timeout_ms=15_000)
+            assert await _until_routed(call) == "served"
             with pytest.raises(ProviderError) as refused:
                 await caller.call(realm, procedure, {}, timeout_ms=15_000)
             assert refused.value.code == "unauthorized"
