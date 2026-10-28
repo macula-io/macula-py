@@ -158,6 +158,12 @@ result, report = await caller.call_report(realm, procedure, payload, confidentia
 assert report.sealed and report.provider == provider.node_id()  # seal_key_id: the key, 16 hex
 ```
 
+When a keyed provider refuses a call `sealed_required`, because its key rotated
+between the advertisement the caller read and the call, the caller reseals to
+the key in the refusal's signed tbs and the call is answered, the key that
+provider holds now. Before macula-py 0.6.0 the call failed on that stale keyless
+candidate (macula-go v0.29.0).
+
 - `kem_advertise` is off by default. Enable it only once every station runs
   macula 12.11 or later and every caller can seal (macula 13, macula-go 0.18,
   macula-py 0.4 or later).

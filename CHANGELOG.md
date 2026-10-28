@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-- CI type-checks every Python block in the README and the guides against the
-  package (`docs.yml`, macula-codebase-checks#8), on every change including
-  doc-only ones, and a release waits on it.
-
 ## 0.6.0 (2026-10-19)
 
 The wire 1.0 release, for the fleet's flag day (19 Oct 2026, 18:03 UTC): from
@@ -13,6 +9,23 @@ then on every live station speaks wire 1.0 (macula 15) and nothing older, and
 0.5.0 can no longer connect. The native library is macula-go v0.27.0, whose
 code is v0.27.0-rc.8's; this package's code is 0.6.0rc4's. The entries for
 0.6.0rc1 to 0.6.0rc4 below are what changed since 0.5.0.
+
+### Changed since this entry was written
+
+- **The native library is built from macula-go v0.29.0**, the release that carries the A0 contract: a
+  call a keyed provider refuses `sealed_required` is resealed to the key in the refusal's signed tbs
+  and answered, instead of the caller failing on a stale keyless candidate (macula-go v0.29.0,
+  macula-py#15).
+- CI type-checks every Python block in the README and the guides against the package (`docs.yml`,
+  macula-codebase-checks#8), on every change including doc-only ones, and a release waits on it.
+
+### What this release does not change
+
+- Sealing stays preferred, not required, by default: a served procedure is `confidential="preferred"`,
+  which seals to the pool's key when it advertises one, and a caller still reaches a provider that
+  names no key in the clear. Refusing a clear call unless the caller opts out is not in this release.
+- A stream served with no policy is still advertised open: `serve_stream` takes `policy` as an
+  optional keyword, and omitting it serves any caller (macula-py#18).
 
 ## 0.6.0rc4 (2026-10-17)
 
