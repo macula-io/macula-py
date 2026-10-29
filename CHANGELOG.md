@@ -28,7 +28,7 @@ since 0.5.0.
   in the clear. Refusing a clear call unless the caller opts out is not in this release.
 - A procedure served with no policy is still advertised open, unary and streaming alike: `serve` and
   `serve_stream` take `policy` as an optional keyword, and omitting it serves any caller
-  (macula-py#18).
+  (macula-py#18 for streams, macula-py#20 for unary).
 
 ## 0.6.0rc4 (2026-10-17)
 
