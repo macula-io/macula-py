@@ -7,13 +7,17 @@
 The A0 release: the native library is macula-go v0.29.0, the release that
 carries the A0 contract where 0.6.0 shipped v0.27.0, and a call a keyed provider
 refuses `sealed_required` is now resealed and answered. No wire change: this
-package's code is 0.6.0rc4's plus the entries below.
+package's code is 0.6.0's plus the entries below.
 
 ### Changed
 
 - **A call a keyed provider refuses `sealed_required` is resealed and answered**, instead of the
   caller failing on a stale keyless candidate: the caller seals again to the key in the refusal's
   signed tbs, which is the key the provider holds now (macula-go v0.29.0, macula-py#15).
+- **The wire and blocking paths meet the structural floor** (macula-io/macula-codebase-checks#9):
+  the map conversion in `_wire.py` and the blocking call path in `_blocking.py` have their helpers
+  extracted so no function nests past the cap, with no baseline and no inline disables, and the
+  error a caller sees is unchanged (24c1b39).
 - CI type-checks every Python block in the README and the guides against the package (`docs.yml`,
   macula-codebase-checks#8), on every change including doc-only ones, and a release waits on it.
 

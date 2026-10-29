@@ -30,7 +30,7 @@
 > 1.0 (macula 15) and nothing older, so it reaches only a wire 1.0 station. The
 > fleet moved to wire 1.0 on 19 Oct 2026 at 18:03 UTC, and from then on 0.5.0
 > and everything before it can no longer connect. A plain
-> `pip install macula-py` resolves 0.6.0. It adds sealed group pub/sub, the
+> `pip install macula-py` resolved 0.6.0 until 0.7.0. It adds sealed group pub/sub, the
 > member's side: a Python node joins a realm group, pulling its epoch keys
 > from the org's distributor over a sealed call with the org's grant, and
 > publishes and reads the group's sealed events.
