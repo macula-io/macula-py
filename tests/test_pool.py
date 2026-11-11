@@ -16,13 +16,14 @@ from macula_py import (
     MaculaTimeoutError,
     NodeKey,
     NotSharedError,
+    Open,
     Pool,
     ProviderError,
     RecordType,
     Seed,
     StreamData,
-    StreamError,
     StreamEnd,
+    StreamError,
     StreamMode,
     StreamReply,
 )
@@ -71,7 +72,7 @@ class TestCalls:
             return {"echo": request.payload, "caller": request.caller}
 
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve(env.realm_id, procedure, echo):
+        async with provider, caller, await provider.serve(env.realm_id, procedure, echo, policy=Open()):
             result = await caller.call(env.realm_id, procedure, "hello")
             assert result == {"echo": "hello", "caller": caller.node_id()}
             with pytest.raises(ProviderError) as refused:
@@ -89,7 +90,7 @@ class TestCalls:
             return {"got": request.payload, "big": 2**63 - 1, "small": -(2**63)}
 
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve(env.realm_id, procedure, back):
+        async with provider, caller, await provider.serve(env.realm_id, procedure, back, policy=Open()):
             result = await caller.call(env.realm_id, procedure, b"\x00\x01\xff")
             assert result == {"got": b"\x00\x01\xff", "big": 2**63 - 1, "small": -(2**63)}
 
@@ -112,14 +113,14 @@ class TestOwnNamespace:
         ring = provider.own_procedure("ring")
         assert ring == f"~{provider.node_id()}/ring"
         caller = await node(env, 1, trusted=False)
-        async with provider, caller, await provider.serve(env.realm_id, ring, lambda r: {"rung_by": r.caller}):
+        async with provider, caller, await provider.serve(env.realm_id, ring, lambda r: {"rung_by": r.caller}, policy=Open()):
             assert await caller.call(env.realm_id, ring, {}) == {"rung_by": caller.node_id()}
             assert [p.node for p in await caller.providers(env.realm_id, ring)] == [provider.node_id()]
 
     async def test_refuses_to_serve_in_another_nodes_namespace(self, env):
         async with await node(env, 0, trusted=False) as p:
             with pytest.raises(Exception, match="own namespace"):
-                await p.serve(env.realm_id, f"~{'01' * 32}/ring", lambda r: 1)
+                await p.serve(env.realm_id, f"~{'01' * 32}/ring", lambda r: 1, policy=Open())
 
 
 async def chunks_before_the_end(stream) -> list[bytes]:
@@ -150,7 +151,7 @@ class TestStreams:
                 await stream.send(chunk)
 
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, watch):
+        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, watch, policy=Open()):
             async with await caller.open_stream(env.realm_id, procedure, StreamMode.SERVER) as stream:
                 got = await chunks_before_the_end(stream)
             assert got == [b"one", b"two", b"three"]
@@ -170,7 +171,7 @@ class TestStreams:
             await stream.reply(total)
 
         caller = await node(env, 0)
-        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.CLIENT, count):
+        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.CLIENT, count, policy=Open()):
             async with await caller.open_stream(env.realm_id, procedure, StreamMode.CLIENT) as stream:
                 for chunk in (b"ab", b"cde", b"f"):
                     await stream.send(chunk)
@@ -290,8 +291,9 @@ class TestCancellation:
         first = await node(env, 0, admitted=True)
         second = await node(env, 1, admitted=True)
         caller = await node(env, 1)
-        async with first, second, caller, await first.serve(env.realm_id, procedure, slow), await second.serve(
-            env.realm_id, procedure, slow
+        async with first, second, caller, await first.serve(env.realm_id, procedure, slow, policy=Open()), await second.serve(
+            env.realm_id, procedure, slow,
+        policy=Open(),
         ):
             async def both_advertised() -> bool:
                 return len(await caller.providers(env.realm_id, procedure)) == 2
@@ -310,7 +312,7 @@ class TestCancellation:
             return "late"
 
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve(env.realm_id, procedure, slow):
+        async with provider, caller, await provider.serve(env.realm_id, procedure, slow, policy=Open()):
             started = time.monotonic()
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(caller.call(env.realm_id, procedure, {}, timeout_ms=10_000), 0.3)
@@ -333,7 +335,7 @@ class TestServingEdges:
         caller = await node(env, 1)
         async with provider, caller:
             served = [
-                await provider.serve(env.realm_id, f"{env.org}/busy_{i}", lambda r, i=i: i) for i in range(4)
+                await provider.serve(env.realm_id, f"{env.org}/busy_{i}", lambda r, i=i: i, policy=Open()) for i in range(4)
             ]
             subscription = await caller.subscribe(env.realm_id, "mcl-py/tests/nothing_said_v1")
             waiting = asyncio.create_task(subscription.next())
@@ -360,7 +362,7 @@ class TestServingEdges:
                 finished.set()
 
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve(env.realm_id, procedure, too_slow):
+        async with provider, caller, await provider.serve(env.realm_id, procedure, too_slow, policy=Open()):
             # A 300 ms deadline can run out before the first call has found the
             # provider and dialled it, and then no handler runs at all: call
             # again until one has been entered.
@@ -393,7 +395,7 @@ class TestServingEdges:
 
         caller = await node(env, 1)
         async with provider, caller:
-            served = await provider.serve(env.realm_id, procedure, never)
+            served = await provider.serve(env.realm_id, procedure, never, policy=Open())
             call = asyncio.create_task(caller.call(env.realm_id, procedure, {}, timeout_ms=20_000))
             await asyncio.wait_for(taken.wait(), 10)
             started = time.monotonic()
@@ -414,7 +416,7 @@ class TestServingEdges:
             raise RuntimeError("broke mid-stream")
 
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, breaks):
+        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, breaks, policy=Open()):
             async with await caller.open_stream(env.realm_id, procedure, StreamMode.SERVER) as stream:
                 with pytest.raises(StreamError) as ended:
                     await read_to_the_end(stream)
@@ -432,7 +434,7 @@ class TestServingEdges:
                     break
 
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.BIDI, doubler):
+        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.BIDI, doubler, policy=Open()):
             async with await caller.open_stream(env.realm_id, procedure, StreamMode.BIDI) as stream:
                 await stream.send_value({"n": 21})
                 frame = await stream.recv(timeout_ms=5_000)
@@ -459,7 +461,7 @@ class TestLifecycle:
         provider = await node(env, 0, admitted=True)
         procedure = f"{env.org}/who"
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: "me"):
+        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: "me", policy=Open()):
             assert await caller.call(env.realm_id, procedure, {}, provider=provider.node_id()) == "me"
 
 

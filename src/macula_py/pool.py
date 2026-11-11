@@ -34,6 +34,7 @@ from macula_py._wire import (
     ClosedError,
     InvalidHandleError,
     Id,
+    MaculaError,
     Mcid,
     NotFoundError,
     decode_payload,
@@ -43,7 +44,7 @@ from macula_py._wire import (
 )
 from macula_py.key import NodeKey
 from macula_py.stream import Request, SealReport, Stream, StreamMode, request_from, seal_report
-from macula_py.ucan import Policy, RealmMemberRequired, UcanRequired
+from macula_py.ucan import Open, Policy, RealmMemberRequired, UcanRequired
 
 log = logging.getLogger("macula_py")
 
@@ -132,6 +133,53 @@ class Event:
     sealed: bool = False
     seal_key_id: str | None = None
     unopened: str | None = None
+
+
+@dataclass(frozen=True)
+class Notice:
+    """What a subscription reports when its events may have been missed: its
+    last station link ended (``kind`` NOTICE_INTERRUPTED, ``from_ms`` when that
+    link last heard from its station, for ``reason``), or a station carries the
+    subscription again (``kind`` NOTICE_GAP, and what fell between ``from_ms``
+    and ``to_ms`` may be gone, so resync).
+
+    Every subscription item carries a ``kind`` (cabi/CONTRACT.md, "Inboxes"),
+    and a notice has none of an event's fields: read as an Event it was a
+    TypeError on the first link lost. A notice arrives only where no other
+    link carried the subscription through, and never at the first subscribe.
+    The times are this node's clock, hints and not a filter on
+    ``published_at``."""
+
+    kind: str
+    from_ms: int
+    to_ms: int | None
+    reason: str
+
+
+NOTICE_INTERRUPTED = "interrupted"
+NOTICE_GAP = "gap"
+
+
+def _event_or_notice(item: dict) -> Event | Notice:
+    """One item a subscription handed over, as the ABI wrote it. Everything
+    past this point is the package's own shape."""
+    kind = item.get("kind", "event")
+    if kind == "event":
+        return Event(
+            item["publisher"],
+            item["realm"],
+            item["topic"],
+            item["seq"],
+            item["published_at"],
+            item.get("payload"),
+            item["delivered_via"],
+            sealed=item.get("sealed") == 1,
+            seal_key_id=item.get("seal_key_id"),
+            unopened=item.get("unopened"),
+        )
+    if kind in (NOTICE_INTERRUPTED, NOTICE_GAP):
+        return Notice(kind, item["from_ms"], item.get("to_ms"), item["reason"])
+    raise MaculaError(f"macula-py: a subscription item of kind {kind!r}, which this macula-py does not read")
 
 
 @dataclass(frozen=True)
@@ -227,14 +275,14 @@ def _group_options(group: Group) -> bytes:
     return json.dumps(options).encode()
 
 
-def _serve_options(policy: Policy | None, confidential: ServedConfidential | None) -> bytes:
+def _serve_options(policy: Policy, confidential: ServedConfidential | None) -> bytes:
     """A served procedure's options as macula_pool_serve_opts and
-    macula_pool_serve_stream_opts take them."""
-    options: dict[str, Any] = {}
-    if policy is not None:
-        if not isinstance(policy, (UcanRequired, RealmMemberRequired)):
-            raise TypeError("macula-py: a policy is a macula_py.ucan.UcanRequired or RealmMemberRequired")
-        options["policy"] = policy.json()
+    macula_pool_serve_stream_opts take them. The policy is always sent: ABI 2
+    refuses options that name none, so serving anyone is said out loud with
+    macula_py.ucan.Open."""
+    if not isinstance(policy, (Open, UcanRequired, RealmMemberRequired)):
+        raise TypeError("macula-py: a policy is a macula_py.ucan.Open, UcanRequired or RealmMemberRequired")
+    options: dict[str, Any] = {"policy": policy.json()}
     if confidential is not None:
         options["confidential"] = confidential
     return json.dumps(options).encode()
@@ -286,26 +334,18 @@ class Subscription:
         self.closed = False
         """True once the subscription ended and every event was taken."""
 
-    async def next(self, timeout_ms: int = 0) -> Event | None:
-        """The next event, or None when timeout_ms ran out (0 waits for ever)
-        or the subscription ended (then closed is True)."""
+    async def next(self, timeout_ms: int = 0) -> Event | Notice | None:
+        """The next item: an Event for a fact, or a Notice when the library
+        says events may have been missed (its link to the station ended, or a
+        gap followed). None when timeout_ms ran out (0 waits for ever) or the
+        subscription ended (then closed is True). A notice is never handed back
+        as an Event."""
         item, closed = await _next_item(native(), "macula_subscription_next", self._live(), timeout_ms)
         if closed:
             self.closed = True
         if item is None:
             return None
-        return Event(
-            item["publisher"],
-            item["realm"],
-            item["topic"],
-            item["seq"],
-            item["published_at"],
-            item.get("payload"),
-            item["delivered_via"],
-            sealed=item.get("sealed") == 1,
-            seal_key_id=item.get("seal_key_id"),
-            unopened=item.get("unopened"),
-        )
+        return _event_or_notice(item)
 
     def dropped(self) -> int:
         """Events dropped because the inbox (256) was full."""
@@ -314,11 +354,11 @@ class Subscription:
     def __aiter__(self) -> Subscription:
         return self
 
-    async def __anext__(self) -> Event:
+    async def __anext__(self) -> Event | Notice:
         while True:
-            event = await self.next()
-            if event is not None:
-                return event
+            item = await self.next()
+            if item is not None:
+                return item
             if self.closed:
                 raise StopAsyncIteration
 
@@ -707,16 +747,20 @@ class Pool:
         procedure: str,
         handler: Handler,
         *,
-        policy: Policy | None = None,
+        policy: Policy,
         confidential: ServedConfidential | None = None,
     ) -> Served:
         """Serves procedure in realm: ``~<own node_id>/<name>`` (own_procedure)
         or ``<org>/<name>`` under an org that delegated it to this node.
         handler(request) returns the result, directly or as an awaitable; an
         exception it raises reaches the caller as a ProviderError of code
-        handler_error with the exception's text as its detail. With a policy
-        (macula_py.ucan), only calls whose UCAN it accepts reach the handler;
-        the rest are answered unauthorized.
+        handler_error with the exception's text as its detail.
+
+        policy is required, and names who may call: macula_py.ucan.Open serves
+        anyone, and UcanRequired or RealmMemberRequired admits only a call
+        whose UCAN the policy accepts, answered unauthorized otherwise. There
+        is no default, so advertising a procedure to the whole mesh is a line
+        in the source rather than an argument left out.
 
         confidential (ServedConfidential): "preferred" (the default) names
         this node's KEM key when the pool was connected with kem_advertise;
@@ -750,14 +794,15 @@ class Pool:
         mode: StreamMode,
         handler: StreamHandler,
         *,
-        policy: Policy | None = None,
+        policy: Policy,
         confidential: ServedConfidential | None = None,
     ) -> Served:
         """Serves a streaming procedure: handler(stream) runs per session, with
         the session's request as stream.request. The stream is closed when the
-        handler returns, and aborted with handler_error when it raises. With a
-        policy (macula_py.ucan), only opens whose UCAN it accepts start a
-        session; the rest are refused with a stream error, unauthorized.
+        handler returns, and aborted with handler_error when it raises. policy
+        as serve's: Open serves anyone, and UcanRequired or
+        RealmMemberRequired admits only an open whose UCAN it accepts, refused
+        with a stream error, unauthorized, otherwise.
         confidential as serve's, and so is the wait for a station's
         acceptance."""
         n = native()

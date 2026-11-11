@@ -37,6 +37,7 @@ from macula_py.pool import (
     FoundRecords,
     Group,
     LinkStatus,
+    Notice,
     Pool,
     PoolEvent,
     Provider,
@@ -58,7 +59,7 @@ from macula_py.stream import (
     StreamMode,
     StreamReply,
 )
-from macula_py.ucan import Policy, RealmMemberRequired, UcanRequired
+from macula_py.ucan import Open, Policy, RealmMemberRequired, UcanRequired
 
 __all__ = [
     "DEFAULT_CALL_TIMEOUT_MS",
@@ -80,10 +81,12 @@ __all__ = [
     "MaculaTimeoutError",
     "NoProviderError",
     "NodeKey",
+    "Notice",
     "NotACallerError",
     "NotFoundError",
     "NotSettledError",
     "NotSharedError",
+    "Open",
     "Policy",
     "Pool",
     "PoolEvent",

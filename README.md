@@ -19,12 +19,18 @@
 
 ---
 
+> **A0, 0.8.0 (2026-11-11):** over macula-go v0.31.0's C ABI 2. Every served
+> procedure names who may call it: `policy` is required, and `Open()` is the
+> line that serves anyone, so leaving an argument out no longer advertises a
+> procedure to the whole mesh. A subscription hands back a `Notice` when its
+> events may have been missed, instead of throwing on the first link lost. A
+> plain `pip install macula-py` resolves 0.8.0.
+>
 > **A0, 0.7.0 (2026-10-29):** over macula-go v0.29.0's C ABI. A call a keyed
 > provider refuses `sealed_required` is now resealed to the key that refusal
 > carries and answered, instead of failing on a stale keyless candidate. Sealing
-> stays preferred, not required, by default, and a procedure served with no
-> policy is still open; refusing a clear call unless the caller opts out is not
-> in this release. A plain `pip install macula-py` resolves 0.7.0.
+> stays preferred, not required, by default. That release's `serve` still took
+> `policy` as an optional keyword; 0.8.0 requires it.
 >
 > **Wire 1.0, 0.6.0 (2026-10-19):** built on macula-go v0.27.0, it speaks wire
 > 1.0 (macula 15) and nothing older, so it reaches only a wire 1.0 station. The
@@ -111,11 +117,23 @@ namespace (`~<node_id>/<name>`, see `Pool.own_procedure`) need none.
 | `NodeKey` | `generate`, `load`, `load_or_create`, `save`, `node_id`, `public_key`, `profile`, `sign`, `verify`, `free`; `ucan`, `device_request_proof`, `ownership_proof` (below) |
 | `Pool.connect` | seeds, `realm_trust`, `kem_advertise` (sealing, below), and the pool's tuning; `async with` closes it |
 | calls | `call`, `call_report`, `providers`; `call(..., ucan=, proofs=)` presents a UCAN, `confidential=` seals it |
-| serving | `serve(realm, procedure, handler, policy=None, confidential=None)`: handler(request) returns the result, directly or as an awaitable; an exception reaches the caller as a `ProviderError` of code `handler_error` |
-| streams | `open_stream`, `serve_stream`; a `Stream` has `send`, `send_value`, `close_send`, `reply`, `abort`, `close`, `recv`, `report`, and iterates its frames |
-| pub/sub | `publish`, `subscribe`, and `publish_group`, `subscribe_group` for a sealed group (below); a `Subscription` iterates its events, or `next(timeout_ms)` |
+| serving | `serve(realm, procedure, handler, *, policy, confidential=None)`: `policy` is required — `Open()` serves anyone, `UcanRequired`/`RealmMemberRequired` gate it (below); handler(request) returns the result, directly or as an awaitable; an exception reaches the caller as a `ProviderError` of code `handler_error` |
+| streams | `open_stream`, `serve_stream` (whose `policy` is required too); a `Stream` has `send`, `send_value`, `close_send`, `reply`, `abort`, `close`, `recv`, `report`, and iterates its frames |
+| pub/sub | `publish`, `subscribe`, and `publish_group`, `subscribe_group` for a sealed group (below); a `Subscription` iterates its items, or `next(timeout_ms)`, each an `Event` or a `Notice` that events may have been missed |
 | content | `share_content`, `unshare_content`, `get_content` |
 | DHT | `find_record`, `find_records`, `find_records_by_type`, `put_record` |
+
+### Serving, and who may call
+
+Every serve names who may call it: `policy` has no default, so a procedure is
+advertised to the whole mesh only where the source says `Open()`, as macula#150
+made the Erlang SDK say `auth => open`.
+
+```python
+from macula_py import Open
+
+served = await provider.serve(realm, procedure, handler, policy=Open())
+```
 
 ### UCANs
 
@@ -157,7 +175,7 @@ until a provider opts in, and a caller seals whenever it can:
 ```python
 # The provider names its KEM key in its advertisements.
 provider = await Pool.connect(key, seeds, realm_trust=trust, kem_advertise=True)
-served = await provider.serve(realm, procedure, handler, confidential="required")
+served = await provider.serve(realm, procedure, handler, policy=Open(), confidential="required")
 
 # The caller seals to it: "preferred" (the default) whenever the provider's
 # advertisement names a key, "required" never calls one that names none.
@@ -194,6 +212,29 @@ What stays visible: a request's UCAN and proofs, sizes, timing and routing.
 Content (`share_content`) is public by design and travels in the clear.
 macula-go's `cabi/CONTRACT.md` ("Confidentiality", "The seal report") is the
 contract.
+
+### Subscriptions, and events that may have been missed
+
+A subscription hands back an `Event`, or a `Notice` when the library reports
+that events may have been missed: its last link to a station ended
+(`NOTICE_INTERRUPTED`, from when that link last heard from its station, for
+`reason`), or a station carries the subscription again (`NOTICE_GAP`, and what
+fell between `from_ms` and `to_ms` may be gone, so resync). Every item carries
+a `kind` on the wire, and a notice has none of an event's fields.
+
+```python
+from macula_py import Event, Notice
+
+async for item in subscription:
+    if isinstance(item, Notice):
+        print(f"may have missed events: {item.kind} {item.reason}")
+        continue
+    print(item.topic, item.payload)
+```
+
+A notice arrives only where no other link carried the subscription through, and
+never at the first subscribe. A `kind` this package does not read is refused by
+name rather than read as an event.
 
 ### Sealed groups
 

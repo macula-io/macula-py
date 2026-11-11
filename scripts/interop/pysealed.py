@@ -30,8 +30,9 @@ import sys
 
 from macula_py import (
     InvalidArgumentError,
-    NodeKey,
     NoProviderError,
+    NodeKey,
+    Open,
     Pool,
     SealReport,
     Seed,
@@ -82,8 +83,8 @@ async def serve(pool: Pool, realm: str, hold: str) -> int:
         await stream.send(b"chunk from py")
         await stream.reply("streamed by py")
 
-    await pool.serve(realm, own(this, "vault"), vault, confidential="required")
-    await pool.serve_stream(realm, own(this, "watch"), StreamMode.SERVER, watch, confidential="required")
+    await pool.serve(realm, own(this, "vault"), vault, confidential="required", policy=Open())
+    await pool.serve_stream(realm, own(this, "watch"), StreamMode.SERVER, watch, confidential="required", policy=Open())
     print("serving", flush=True)
     await asyncio.sleep(float(hold))
     return 0

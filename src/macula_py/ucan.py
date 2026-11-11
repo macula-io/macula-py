@@ -31,6 +31,16 @@ _KEY_ID_LABEL = b"MACULA-KEY-ID-V1"
 
 
 @dataclass(frozen=True)
+class Open:
+    """Serves anyone. The C ABI refuses serve options that name no policy
+    (ABI 2, macula-go#57, #60), so a procedure is open only where its own
+    serve says so, as macula#150 made the Erlang SDK say it."""
+
+    def json(self) -> dict:
+        return {"kind": "open"}
+
+
+@dataclass(frozen=True)
 class UcanRequired:
     """A chain rooted at the identity key of the node ``issuer``."""
 
@@ -60,7 +70,7 @@ class RealmMemberRequired:
         return {"kind": "realm_member_required", "key_id": id32(self.key_id).hex(), "can": self.can}
 
 
-Policy = Union[UcanRequired, RealmMemberRequired]
+Policy = Union[Open, UcanRequired, RealmMemberRequired]
 
 
 def proof_id(token: str) -> str:

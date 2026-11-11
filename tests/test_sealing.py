@@ -17,10 +17,11 @@ import pytest
 from macula_py import (
     ConfidentialityError,
     InvalidArgumentError,
-    NodeKey,
     NoProviderError,
+    NodeKey,
     NotACallerError,
     NotSettledError,
+    Open,
     Pool,
     Reported,
     SealReport,
@@ -79,11 +80,12 @@ class TestConnect:
         provider = await node(env, 0)
         async with provider:
             with pytest.raises(ConfidentialityError) as refused:
-                await provider.serve(env.realm_id, provider.own_procedure("x"), lambda r: 1, confidential="required")
+                await provider.serve(env.realm_id, provider.own_procedure("x"), lambda r: 1, confidential="required", policy=Open())
             assert refused.value.reason == "kem_advertise_disabled"
             with pytest.raises(ConfidentialityError) as refused:
                 await provider.serve_stream(
-                    env.realm_id, provider.own_procedure("y"), StreamMode.SERVER, _nothing, confidential="required"
+                    env.realm_id, provider.own_procedure("y"), StreamMode.SERVER, _nothing, confidential="required",
+                policy=Open(),
                 )
             assert refused.value.reason == "kem_advertise_disabled"
 
@@ -94,7 +96,8 @@ class TestSealedCalls:
         procedure = provider.own_procedure("sealed_echo")
         caller = await node(env, 1)
         async with provider, caller, await provider.serve(
-            env.realm_id, procedure, lambda r: {"echoed": r.payload, "sealed": int(r.sealed)}, confidential="required"
+            env.realm_id, procedure, lambda r: {"echoed": r.payload, "sealed": int(r.sealed)}, confidential="required",
+        policy=Open(),
         ):
             assert await caller.call(env.realm_id, procedure, {"word": "hush"}, confidential="required") == {
                 "echoed": {"word": "hush"},
@@ -110,7 +113,7 @@ class TestSealedCalls:
         other = await node(env, 0, kem_advertise=True)
         procedure = provider.own_procedure("pinned")
         caller = await node(env, 1)
-        async with provider, other, caller, await provider.serve(env.realm_id, procedure, lambda r: provider.node_id()):
+        async with provider, other, caller, await provider.serve(env.realm_id, procedure, lambda r: provider.node_id(), policy=Open()):
             assert (
                 await caller.call(env.realm_id, procedure, {}, provider=provider.node_id(), confidential="required")
                 == provider.node_id()
@@ -122,7 +125,7 @@ class TestSealedCalls:
         provider = await node(env, 0)
         procedure = provider.own_procedure("clear_echo")
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: {"sealed": int(r.sealed)}):
+        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: {"sealed": int(r.sealed)}, policy=Open()):
             assert await caller.call(env.realm_id, procedure, {}) == {"sealed": 0}
             with pytest.raises(ConfidentialityError) as refused:
                 await caller.call(env.realm_id, procedure, {}, confidential="required")
@@ -168,7 +171,8 @@ class TestServing:
         procedure = provider.own_procedure("off_echo")
         caller = await node(env, 1)
         async with provider, caller, await provider.serve(
-            env.realm_id, procedure, lambda r: {"sealed": int(r.sealed)}, confidential="off"
+            env.realm_id, procedure, lambda r: {"sealed": int(r.sealed)}, confidential="off",
+        policy=Open(),
         ):
             assert await caller.call(env.realm_id, procedure, {}) == {"sealed": 0}
 
@@ -176,10 +180,11 @@ class TestServing:
         provider = await node(env, 0, kem_advertise=True)
         async with provider:
             with pytest.raises(InvalidArgumentError):
-                await provider.serve(env.realm_id, provider.own_procedure("x"), lambda r: 1, confidential="maybe")
+                await provider.serve(env.realm_id, provider.own_procedure("x"), lambda r: 1, confidential="maybe", policy=Open())
             with pytest.raises(InvalidArgumentError):
                 await provider.serve_stream(
-                    env.realm_id, provider.own_procedure("y"), StreamMode.SERVER, _nothing, confidential="maybe"
+                    env.realm_id, provider.own_procedure("y"), StreamMode.SERVER, _nothing, confidential="maybe",
+                policy=Open(),
                 )
 
 
@@ -203,7 +208,8 @@ class TestSealedStreams:
 
         caller = await node(env, 1)
         async with provider, caller, await provider.serve_stream(
-            env.realm_id, procedure, StreamMode.CLIENT, count, confidential="required"
+            env.realm_id, procedure, StreamMode.CLIENT, count, confidential="required",
+        policy=Open(),
         ):
             async with await caller.open_stream(
                 env.realm_id, procedure, StreamMode.CLIENT, confidential="required"
@@ -217,7 +223,7 @@ class TestSealedStreams:
         provider = await node(env, 0)
         procedure = provider.own_procedure("clear_watch")
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, _nothing):
+        async with provider, caller, await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, _nothing, policy=Open()):
             with pytest.raises(ConfidentialityError) as refused:
                 await caller.open_stream(env.realm_id, procedure, StreamMode.SERVER, confidential="required")
             assert refused.value.reason == "no_kem_key"
@@ -228,7 +234,7 @@ class TestSealReport:
         provider = await node(env, 0, kem_advertise=True)
         procedure = provider.own_procedure("reported")
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: {"echoed": r.payload}):
+        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: {"echoed": r.payload}, policy=Open()):
             reported = await caller.call_report(env.realm_id, procedure, {"word": "hush"})
             assert isinstance(reported, Reported)
             result, report = reported
@@ -242,7 +248,7 @@ class TestSealReport:
         other = await node(env, 0, kem_advertise=True)
         procedure = provider.own_procedure("reported_pinned")
         caller = await node(env, 1)
-        async with provider, other, caller, await provider.serve(env.realm_id, procedure, lambda r: 1):
+        async with provider, other, caller, await provider.serve(env.realm_id, procedure, lambda r: 1, policy=Open()):
             result, report = await caller.call_report(
                 env.realm_id, procedure, {}, provider=provider.node_id(), confidential="required"
             )
@@ -255,7 +261,7 @@ class TestSealReport:
         provider = await node(env, 0)
         procedure = provider.own_procedure("reported_clear")
         caller = await node(env, 1)
-        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: 1):
+        async with provider, caller, await provider.serve(env.realm_id, procedure, lambda r: 1, policy=Open()):
             assert await caller.call_report(env.realm_id, procedure, {}) == Reported(
                 1, SealReport(sealed=False, provider=provider.node_id(), seal_key_id=None)
             )
@@ -280,7 +286,8 @@ class TestSealReport:
 
         caller = await node(env, 1)
         async with provider, caller, await provider.serve_stream(
-            env.realm_id, procedure, StreamMode.SERVER, watch, confidential="required"
+            env.realm_id, procedure, StreamMode.SERVER, watch, confidential="required",
+        policy=Open(),
         ):
             async with await caller.open_stream(
                 env.realm_id, procedure, StreamMode.SERVER, confidential="required"
@@ -302,7 +309,8 @@ class TestSealReport:
         procedure = provider.own_procedure("ended_unsettled")
         caller = await node(env, 1)
         async with provider, caller, await provider.serve_stream(
-            env.realm_id, procedure, StreamMode.SERVER, _nothing, confidential="required"
+            env.realm_id, procedure, StreamMode.SERVER, _nothing, confidential="required",
+        policy=Open(),
         ):
             async with await caller.open_stream(
                 env.realm_id, procedure, StreamMode.SERVER, confidential="required"
