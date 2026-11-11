@@ -8,7 +8,7 @@ c_char_p) so they can be freed with macula_free_string / macula_free_bytes.
 
 from __future__ import annotations
 
-ABI_VERSION = 1
+ABI_VERSION = 2
 # The wire macula.h was written for. The load path compares it with the
 # library's macula_wire_version() and refuses another major (macula.h, cabi's
 # CONTRACT.md), so a macula-py wheel proves which wire it links whatever it is
@@ -24,18 +24,20 @@ def speaks_our_wire(library_wire: str) -> bool:
     return library_wire.split(".")[0] == WIRE_VERSION.split(".")[0]
 # The oldest macula-go release this macula-py supports: its library exports
 # every function below (a new function does not change ABI_VERSION) and
-# speaks wire 1.0 alone (v0.27.0, macula-go#30). macula_wire_version and
-# macula_library_version exist since then, so a library from before it fails
-# the declarations above naming this floor. Earlier floors: v0.27.0-rc.1,
-# which speaks wire 1.0 but has no group call, so macula_pool_publish_group
-# and macula_pool_subscribe_group fail the declarations naming it, as they
-# must: a library from before it cannot seal a group's publication at all
+# speaks wire 1.0 alone (v0.27.0, macula-go#30). ABI 2 arrived with v0.31.0,
+# whose serve options must name a policy (macula-go#57, #60), and a library of
+# ABI 1 is refused by the version check before any of this is read; the floor
+# names the release a symbol this binding declares first appeared in.
+# Earlier floors: v0.27.0-rc.3, which speaks wire 1.0 with the group call that
+# a library from before it lacks, so macula_pool_publish_group and
+# macula_pool_subscribe_group fail the declarations naming it, as they must: a
+# library from before it cannot seal a group's publication at all
 # (macula-go#34). v0.26.0 refuses a UCAN whose issuer did:key is over 4,400
 # characters before decoding it (macula#87); v0.23.0 offers
 # SecP384r1MLKEM1024 alone (macula-go#20), which an older library silently
 # lacked, landing on SecP256r1MLKEM768 with every station;
 # macula_signed_object_verify exists since v0.22.0.
-LIBRARY_FLOOR = "v0.27.0-rc.3"
+LIBRARY_FLOOR = "v0.31.0"
 
 H = "macula_handle"
 ERR = "char**"
@@ -112,9 +114,10 @@ FUNCTIONS: dict[str, tuple[str, list[str]]] = {
     "macula_subscription_next": ("char*", [H, "int64_t", H, "int32_t*", ERR]),
     "macula_subscription_dropped": ("uint64_t", [H, ERR]),
     "macula_subscription_stop": ("void", [H]),
-    # Serving
-    "macula_pool_serve": (H, [H, REALM, "const char*", ERR]),
-    "macula_pool_serve_stream": (H, [H, REALM, "const char*", "int32_t", ERR]),
+    # Serving. Every door but the gated one takes options, and ABI 2 requires a
+    # policy in them: macula_pool_serve and macula_pool_serve_stream, which
+    # served anyone because an argument was left out, are gone (macula-go#57,
+    # #60).
     "macula_pool_serve_gated": (H, [H, REALM, "const char*", "const char*", ERR]),
     "macula_pool_serve_stream_gated": (H, [H, REALM, "const char*", "int32_t", "const char*", ERR]),
     "macula_pool_serve_opts": (H, [H, REALM, "const char*", "const char*", ERR]),
