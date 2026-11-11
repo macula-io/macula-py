@@ -25,9 +25,11 @@ def speaks_our_wire(library_wire: str) -> bool:
 # The oldest macula-go release this macula-py supports: its library exports
 # every function below (a new function does not change ABI_VERSION) and
 # speaks wire 1.0 alone (v0.27.0, macula-go#30). ABI 2 arrived with v0.31.0,
-# whose serve options must name a policy (macula-go#57, #60), and a library of
-# ABI 1 is refused by the version check before any of this is read; the floor
-# names the release a symbol this binding declares first appeared in.
+# whose serve options must name a policy (macula-go#57, #60). A library of an
+# older ABI is refused by the version check in Native, which runs after the
+# declarations are read: its symbols are all still there (v0.30.0 exports
+# every one of them and is ABI 1), so the version is what refuses it. This
+# floor names the release a symbol this binding declares first appeared in.
 # Earlier floors: v0.27.0-rc.3, which speaks wire 1.0 with the group call that
 # a library from before it lacks, so macula_pool_publish_group and
 # macula_pool_subscribe_group fail the declarations naming it, as they must: a

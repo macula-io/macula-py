@@ -36,11 +36,17 @@ def _native_over(monkeypatch, library: _StandInLibrary, path: str = "/nonexisten
     return Native(path)
 
 
-def test_a_library_of_another_abi_is_refused_naming_both(monkeypatch):
+# A library of the ABI before this one is the case in the field, not the one
+# after: macula-go v0.30.0 is ABI 1 and exports every name in _abi.FUNCTIONS,
+# so it passes the declarations and only the version check refuses it. A guard
+# that refused a greater version alone would let it through (M5c), which is why
+# both directions are here.
+@pytest.mark.parametrize("abi", [ABI_VERSION - 1, ABI_VERSION + 1])
+def test_a_library_of_another_abi_is_refused_naming_both(monkeypatch, abi):
     with pytest.raises(MaculaError) as raised:
-        _native_over(monkeypatch, _StandInLibrary(abi=ABI_VERSION + 1))
+        _native_over(monkeypatch, _StandInLibrary(abi=abi))
     message = str(raised.value)
-    assert f"macula C ABI {ABI_VERSION + 1}" in message
+    assert f"macula C ABI {abi}" in message
     assert f"binds ABI {ABI_VERSION}" in message
     assert "/nonexistent/libmacula.so" in message
 
