@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+## 0.8.0 (2026-11-11)
+
+The breaking release: the native library is macula-go v0.31.0 and the C ABI is
+2, every served procedure names who may call it, and a subscription reports
+missed events with a `Notice` instead of throwing on the first link lost.
+
+### Security (breaking)
+
+- **Every serve names a policy, and the C ABI is 2 (macula-py#20, #18; macula-go#57, #60).** A
+  procedure could be served to any caller by leaving an argument out: `policy` was an optional
+  keyword on `Pool.serve` and `Pool.serve_stream`, and omitting it reached libmacula as nil, which
+  served open. `policy` is required now, so `Open()` is the line in the source that says anyone and
+  a call that names no policy is refused at the call site, before libmacula is reached and before a
+  station hears of the procedure. Under `UcanRequired` or `RealmMemberRequired` libmacula still
+  refuses a caller whose chain the policy does not accept, before the handler sees it. This is what
+  macula#150 did for the Erlang SDK.
+- **libmacula is macula-go v0.31.0, and its ABI is 2.** Its `macula_pool_serve_opts` and
+  `_serve_stream_opts` require `{"policy": ...}` and refuse options that name none with
+  `invalid_argument`, naming both fixes; `macula_pool_serve` and `macula_pool_serve_stream`, which
+  served open without saying so, are gone. A library of ABI 1 under this binding, or an ABI 2
+  library under a binding of ABI 1, is refused at load by name.
+- **Every offer in this package's tests, examples and interop scripts names a policy.** The ones
+  that served anyone say `Open()` and behave exactly as before.
+
+### Changed (breaking)
+
+- **A subscription's notice is a `Notice`, not a broken `Event` (macula-py#20).** Since macula-go
+  v0.31.0 every subscription item carries a `kind`, and the ABI delivers `interrupted` and `gap`
+  notices besides an event (CONTRACT.md, "Inboxes"). `Subscription.next` built an `Event` out of
+  every item, so the first time a subscription lost its last link it raised a `TypeError`, and the
+  `gap` that says to resync was lost the same way. `next()`, and iterating the subscription, now
+  hand back `Event | Notice`: a notice names its `kind` (`NOTICE_INTERRUPTED`, `NOTICE_GAP`), the
+  time it is about and the library's reason, and a kind this binding does not read is refused by
+  name instead of being read as an event.
+
 ## 0.7.0 (2026-10-29)
 
 The A0 release: the native library is macula-go v0.29.0, the release that
