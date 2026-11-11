@@ -38,7 +38,7 @@ async def _nothing(stream) -> None:
 async def test_a_serve_that_names_no_policy_is_refused_at_the_call(env):
     async with await node(env, 0) as provider, await node(env, 1) as caller:
         procedure = provider.own_procedure("unnamed")
-        with pytest.raises(TypeError, match="policy"):
+        with pytest.raises(TypeError, match="required keyword-only argument: .policy."):
             await provider.serve(env.realm_id, procedure, _served)
         # Nothing was advertised: the call never reached the station, so the
         # DHT has nobody to offer and providers() refuses rather than answers [].
@@ -49,7 +49,7 @@ async def test_a_serve_that_names_no_policy_is_refused_at_the_call(env):
 async def test_a_serve_stream_that_names_no_policy_is_refused_at_the_call(env):
     async with await node(env, 0) as provider:
         procedure = provider.own_procedure("unnamed_stream")
-        with pytest.raises(TypeError, match="policy"):
+        with pytest.raises(TypeError, match="required keyword-only argument: .policy."):
             await provider.serve_stream(env.realm_id, procedure, StreamMode.SERVER, _nothing)
 
 
